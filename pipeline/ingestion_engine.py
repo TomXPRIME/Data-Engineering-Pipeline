@@ -250,19 +250,22 @@ class IngestionEngine:
         # Ingest price files
         if prices_dir.exists():
             for csv_file in prices_dir.glob("price_*.csv"):
-                total_ingested += self.ingest_price_file(csv_file)
+                if csv_file.exists():  # Skip if file was deleted during scan
+                    total_ingested += self.ingest_price_file(csv_file)
 
         # Ingest fundamental files
         if fundamentals_dir.exists():
             for dated_dir in fundamentals_dir.iterdir():
                 if dated_dir.is_dir():
                     for csv_file in dated_dir.glob("*.csv"):
-                        total_ingested += self.ingest_fundamental_file(csv_file, dated_dir.name)
+                        if csv_file.exists():  # Skip if file was deleted during scan
+                            total_ingested += self.ingest_fundamental_file(csv_file, dated_dir.name)
 
         # Ingest transcript files
         if transcripts_dir.exists():
             for pdf_file in transcripts_dir.glob("*.pdf"):
-                total_ingested += self.ingest_transcript_file(pdf_file)
+                if pdf_file.exists():  # Skip if file was deleted during scan
+                    total_ingested += self.ingest_transcript_file(pdf_file)
 
         logger.info(f"Scan complete. Total records ingested: {total_ingested}")
         return total_ingested

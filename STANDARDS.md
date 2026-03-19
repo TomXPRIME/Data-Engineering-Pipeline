@@ -354,4 +354,4 @@ def get_price(self, ticker: str, date: str) -> pd.DataFrame:
 
 ---
 
-本文档随项目迭代更新。如有疑问，请先查看 `IMPLEMENTATION_PLAN.md`。
+本文档随项目迭代更新。技术设计文档：`docs/superpowers/specs/2026-03-20-spx-data-pipeline-design.md`。

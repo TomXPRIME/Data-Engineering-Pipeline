@@ -15,6 +15,7 @@ from typing import Optional
 
 import duckdb
 import pandas as pd
+from textblob import TextBlob
 
 # ---------------------------------------------------------------------------
 # Configuration (mirrors ingestion_engine.py layout)
@@ -54,6 +55,8 @@ class ELTPipeline:
     Transforms:
         raw_price_stream      -> output/silver/price/date=YYYY-MM-DD/*.parquet
         raw_fundamental_index -> output/silver/fundamentals/ticker=XXX/data.parquet
+        raw_transcript_index  -> output/silver/transcript_text/ticker=XXX/date=YYYY-MM-DD/content.txt
+        transcript text       -> output/silver/transcript_sentiment/ticker=XXX/date=YYYY-MM-DD/sentiment.parquet
 
     Quality violations are logged to silver_quality_issues but rows are NOT
     dropped from the Silver output.
@@ -291,6 +294,173 @@ class ELTPipeline:
         return result[["ticker", "report_type", "metric", "period_date", "value"]]
 
     # ------------------------------------------------------------------ #
+    #  Transcripts: Bronze -> Silver (text extraction)                   #
+    # ------------------------------------------------------------------ #
+
+    def transform_transcripts(self):
+        """raw_transcript_index -> Silver transcript text files.
+
+        1. Deduplicate index (latest received_at per ticker+event_date).
+        2. Read each PDF and extract plain text.
+        3. Write one .txt file per (ticker, event_date) to transcript_text/.
+        """
+        con = self._get_connection()
+
+        index_df = con.execute("""
+            WITH ranked AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY ticker, event_date
+                           ORDER BY received_at DESC
+                       ) AS rn
+                FROM raw_transcript_index
+            )
+            SELECT ticker, event_date, pdf_path, received_at
+            FROM ranked
+            WHERE rn = 1
+        """).fetchdf()
+
+        if index_df.empty:
+            logger.info("No transcript data in Bronze — skipping")
+            return
+        logger.info(f"Transcript index entries: {len(index_df):,}")
+
+        silver_text_dir = SILVER_DIR / "transcript_text"
+        processed = errors = 0
+
+        for _, row in index_df.iterrows():
+            try:
+                text = self._extract_pdf_text(row["pdf_path"])
+                if text is None:
+                    errors += 1
+                    continue
+
+                ticker_dir = silver_text_dir / f"ticker={row['ticker']}"
+                ticker_dir.mkdir(parents=True, exist_ok=True)
+
+                # event_date may be a timestamp — normalize to YYYY-MM-DD for the path
+                event_date_val = row["event_date"]
+                if hasattr(event_date_val, "strftime"):
+                    event_date_str = event_date_val.strftime("%Y-%m-%d")
+                else:
+                    event_date_str = str(event_date_val)[:10]  # "2023-01-26 00:00:00" -> "2023-01-26"
+
+                txt_path = ticker_dir / f"date={event_date_str}" / "content.txt"
+                txt_path.parent.mkdir(parents=True, exist_ok=True)
+                txt_path.write_text(text, encoding="utf-8")
+                processed += 1
+
+            except Exception as exc:
+                logger.warning(f"Failed to extract transcript {row['pdf_path']}: {exc}")
+                errors += 1
+
+        logger.info(
+            f"Extracted {processed:,} transcript text files ({errors} errors)"
+        )
+
+    @staticmethod
+    def _extract_pdf_text(pdf_path: str) -> Optional[str]:
+        """Extract plain text from a PDF file. Returns None on failure."""
+        fp = Path(pdf_path)
+        if not fp.exists():
+            logger.warning(f"Transcript PDF missing: {pdf_path}")
+            return None
+
+        try:
+            # Try pypdf first (faster, pure Python)
+            try:
+                from pypdf import PdfReader
+                reader = PdfReader(fp)
+                text_parts = []
+                for page in reader.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text_parts.append(page_text)
+                return "\n".join(text_parts) if text_parts else None
+            except ImportError:
+                pass
+
+            # Fallback to pdfminer
+            try:
+                from pdfminer.high_level import extract_text
+                return extract_text(str(fp))
+            except ImportError:
+                pass
+
+            logger.warning(f"No PDF library available for {pdf_path}")
+            return None
+
+        except Exception as exc:
+            logger.warning(f"Failed to extract text from {pdf_path}: {exc}")
+            return None
+
+    # ------------------------------------------------------------------ #
+    #  Sentiment: Silver transcript_text -> Silver sentiment parquet     #
+    # ------------------------------------------------------------------ #
+
+    def transform_sentiment(self):
+        """Compute sentiment from silver_transcript_text -> silver_transcript_sentiment.
+
+        Reads all content.txt files under transcript_text/, computes polarity
+        and subjectivity via TextBlob, writes sentiment.parquet per (ticker, date).
+        """
+        silver_text_dir = SILVER_DIR / "transcript_text"
+        if not silver_text_dir.exists():
+            logger.info("No transcript_text directory — skipping sentiment")
+            return
+
+        silver_sentiment_dir = SILVER_DIR / "transcript_sentiment"
+        processed = skipped = 0
+
+        for ticker_dir in silver_text_dir.iterdir():
+            if not ticker_dir.is_dir() or not ticker_dir.name.startswith("ticker="):
+                continue
+            ticker = ticker_dir.name.replace("ticker=", "")
+
+            for date_dir in ticker_dir.iterdir():
+                if not date_dir.is_dir() or not date_dir.name.startswith("date="):
+                    continue
+                event_date = date_dir.name.replace("date=", "")
+                txt_path = date_dir / "content.txt"
+
+                if not txt_path.exists():
+                    skipped += 1
+                    continue
+
+                try:
+                    text = txt_path.read_text(encoding="utf-8")
+                    if not text or not text.strip():
+                        # Empty text cannot be analyzed — store NULL per spec
+                        logger.warning(f"Empty transcript text for {txt_path}")
+                        polarity = None
+                        subjectivity = None
+                    else:
+                        blob = TextBlob(text)
+                        polarity = blob.sentiment.polarity
+                        subjectivity = blob.sentiment.subjectivity
+                except Exception as exc:
+                    logger.warning(f"TextBlob failed for {txt_path}: {exc}")
+                    polarity = None
+                    subjectivity = None
+
+                # Always write parquet (NULL sentiment if TextBlob failed per spec)
+                sentiment_df = pd.DataFrame([{
+                    "ticker": ticker,
+                    "event_date": event_date,
+                    "sentiment_polarity": polarity,
+                    "sentiment_subjectivity": subjectivity,
+                }])
+
+                out_dir = silver_sentiment_dir / f"ticker={ticker}" / f"date={event_date}"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                sentiment_df.to_parquet(out_dir / "sentiment.parquet", index=False)
+                processed += 1
+
+        logger.info(
+            f"Computed sentiment for {processed:,} transcripts ({skipped} skipped)"
+        )
+
+    # ------------------------------------------------------------------ #
     #  Orchestration                                                       #
     # ------------------------------------------------------------------ #
 
@@ -306,6 +476,12 @@ class ELTPipeline:
             if resource in ("all", "fundamentals"):
                 self.transform_fundamentals()
 
+            if resource in ("all", "transcripts"):
+                self.transform_transcripts()
+
+            if resource in ("all", "sentiment"):
+                self.transform_sentiment()
+
             logger.info("ELT pipeline completed successfully")
         finally:
             self.close()
@@ -317,7 +493,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--resource",
-        choices=["all", "price", "fundamentals"],
+        choices=["all", "price", "fundamentals", "transcripts", "sentiment"],
         default="all",
         help="transform target (default: all)",
     )

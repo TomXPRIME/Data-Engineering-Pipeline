@@ -8,6 +8,7 @@ Design: docs/superpowers/specs/2026-03-20-spx-data-pipeline-design.md
 
 import hashlib
 import logging
+import math
 import time
 from datetime import datetime
 from pathlib import Path
@@ -29,6 +30,20 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("ingestion_engine")
+
+
+def _safe_float(val):
+    """Convert NaN/None to SQL NULL for float columns."""
+    if val is None or (isinstance(val, float) and math.isnan(val)):
+        return None
+    return val
+
+
+def _safe_int(val):
+    """Convert NaN/None to SQL NULL for integer columns."""
+    if val is None or (isinstance(val, float) and math.isnan(val)):
+        return None
+    return int(val) if val is not None else None
 
 
 class IngestionEngine:
@@ -106,19 +121,6 @@ class IngestionEngine:
             rows_inserted = 0
             for _, row in df.iterrows():
                 try:
-                    # Handle NaN values by converting to None (NULL in SQL)
-                    def safe_float(val):
-                        import math
-                        if val is None or (isinstance(val, float) and math.isnan(val)):
-                            return None
-                        return val
-
-                    def safe_int(val):
-                        import math
-                        if val is None or (isinstance(val, float) and math.isnan(val)):
-                            return None
-                        return int(val) if val is not None else None
-
                     con.execute(
                         """
                         INSERT INTO raw_price_stream (ticker, date, open, high, low, close, adj_close, volume)
@@ -127,12 +129,12 @@ class IngestionEngine:
                         [
                             row["Ticker"],
                             market_date,
-                            safe_float(row.get("Open")),
-                            safe_float(row.get("High")),
-                            safe_float(row.get("Low")),
-                            safe_float(row.get("Close")),
-                            safe_float(row.get("Adj Close")),
-                            safe_int(row.get("Volume")),
+                            _safe_float(row.get("Open")),
+                            _safe_float(row.get("High")),
+                            _safe_float(row.get("Low")),
+                            _safe_float(row.get("Close")),
+                            _safe_float(row.get("Adj Close")),
+                            _safe_int(row.get("Volume")),
                         ],
                     )
                     rows_inserted += 1

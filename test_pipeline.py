@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-PYTHON = "C:/miniconda3/envs/qf5214_project/python.exe"
+PYTHON = sys.executable
 REPO_ROOT = Path(__file__).parent.resolve()
 
 CLEANUP = (

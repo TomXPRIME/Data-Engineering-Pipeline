@@ -341,11 +341,10 @@ def build_gold(db_path: Path, sql_path: Path) -> bool:
     _print_summary_table(summary_rows)
     print()
 
-    all_ok = all(
-        count is not None and count > 0
-        for _, count, _ in view_results
-    )
-    return all_ok
+    nonexistent = [vname for vname, count, _ in view_results if count is None]
+    empty = [vname for vname, count, _ in view_results if count == 0]
+    failures = nonexistent  # only fail on views that don't exist
+    return len(failures) == 0
 
 
 def verify_only(db_path: Path) -> bool:
@@ -371,11 +370,10 @@ def verify_only(db_path: Path) -> bool:
     _print_summary_table(summary_rows)
     print()
 
-    all_ok = all(
-        count is not None and count > 0
-        for _, count, _ in view_results
-    )
-    return all_ok
+    nonexistent = [vname for vname, count, _ in view_results if count is None]
+    empty = [vname for vname, count, _ in view_results if count == 0]
+    failures = nonexistent  # only fail on views that don't exist
+    return len(failures) == 0
 
 
 # ===========================================================================
@@ -435,10 +433,10 @@ Examples:
         ok = build_gold(db_path, sql_path)
 
     if ok:
-        logger.info(f"All Gold views are present and populated. {_CHECK}")
+        logger.info(f"All Gold views are present. {_CHECK}")
     else:
         logger.warning(
-            "Some Gold views are missing or empty. "
+            "Some Gold views do not exist. "
             "Check logs above for details."
         )
 

@@ -216,3 +216,34 @@ sector_quarterly AS (
 )
 SELECT * FROM sector_quarterly
 ORDER BY year, quarter, momentum_rank;
+
+-- ============================================================
+-- Person C Views: Risk & Performance
+-- ============================================================
+
+-- 5. v_rolling_volatility — 20-day and 60-day rolling volatility (annualized)
+CREATE OR REPLACE VIEW v_rolling_volatility AS
+WITH daily_returns AS (
+    SELECT
+        ticker, date, close,
+        (close - LAG(close, 1) OVER (PARTITION BY ticker ORDER BY date))
+            / NULLIF(LAG(close, 1) OVER (PARTITION BY ticker ORDER BY date), 0) AS daily_return
+    FROM silver_price
+),
+vol AS (
+    SELECT
+        ticker, date, close, daily_return,
+        STDDEV(daily_return) OVER w20 * SQRT(252) AS annualized_vol_20d,
+        STDDEV(daily_return) OVER w60 * SQRT(252) AS annualized_vol_60d,
+        AVG(daily_return) OVER w20 * 252 AS annualized_return_20d
+    FROM daily_returns
+    WINDOW w20 AS (PARTITION BY ticker ORDER BY date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW),
+           w60 AS (PARTITION BY ticker ORDER BY date ROWS BETWEEN 59 PRECEDING AND CURRENT ROW)
+)
+SELECT ticker, date, close,
+    ROUND(annualized_vol_20d, 6) AS annualized_vol_20d,
+    ROUND(annualized_vol_60d, 6) AS annualized_vol_60d,
+    ROUND(annualized_return_20d, 6) AS annualized_return_20d
+FROM vol
+WHERE annualized_vol_20d IS NOT NULL
+ORDER BY ticker, date;

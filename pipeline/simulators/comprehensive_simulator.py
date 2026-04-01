@@ -64,7 +64,7 @@ class ComprehensiveSimulator:
         """Insert a message into queue_messages for downstream consumers."""
         import duckdb
         from pathlib import Path
-        DB_PATH = Path(__file__).parent.parent / "duckdb" / "spx_analytics.duckdb"
+        DB_PATH = Path(__file__).parent.parent.parent / "duckdb" / "spx_analytics.duckdb"
         con = duckdb.connect(str(DB_PATH))
         try:
             con.execute(

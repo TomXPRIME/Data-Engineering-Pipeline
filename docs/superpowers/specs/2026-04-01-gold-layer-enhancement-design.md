@@ -31,15 +31,15 @@ for _, row in df.iterrows():
     con.execute("INSERT INTO raw_price_stream ...", [...])
 
 # AFTER
-con.execute("BEGIN TRANSACTION")
+con.begin()
 try:
     con.executemany(
         "INSERT INTO raw_price_stream (ticker, date, open, high, low, close, adj_close, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         rows
     )
-    con.execute("COMMIT")
+    con.commit()
 except Exception as e:
-    con.execute("ROLLBACK")
+    con.rollback()
     raise
 ```
 
@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS queue_messages (
 
 ### 3.4 Producer (Simulator Side)
 
-After Simulator writes a file to landing_zone, it also inserts a message:
+After Simulator writes a file to landing_zone, it also inserts a message. Three message types:
 
 ```python
 def _enqueue_message(msg_type: str, payload: dict):
@@ -184,8 +184,14 @@ def _enqueue_message(msg_type: str, payload: dict):
         ["simulator", msg_type, json.dumps(payload)]
     )
 
-# After writing price file:
+# Price file written:
 _enqueue_message("price_file", {"filepath": str(csv_path), "ticker": ticker, "date": market_date})
+
+# Fundamental file written:
+_enqueue_message("fundamental_file", {"filepath": str(fund_csv_path), "ticker": ticker, "report_type": report_type})
+
+# Transcript file written:
+_enqueue_message("transcript_file", {"filepath": str(pdf_path), "ticker": ticker, "event_date": event_date})
 ```
 
 ### 3.5 Consumer (Ingestion Side)
@@ -197,7 +203,6 @@ def poll_queue(self, batch_size: int = 100):
     """Fetch pending messages, process them, mark as done or failed."""
     con = self._get_connection()
 
-    # Claim a batch of messages (SELECT FOR UPDATE SKIP LOCKED equivalent)
     rows = con.execute("""
         SELECT id, msg_type, payload
         FROM queue_messages
@@ -212,7 +217,12 @@ def poll_queue(self, batch_size: int = 100):
             payload_dict = json.loads(payload)
             if msg_type == "price_file":
                 self.ingest_price_file(Path(payload_dict["filepath"]))
-            # ... handle other types
+            elif msg_type == "fundamental_file":
+                self.ingest_fundamental_file(Path(payload_dict["filepath"]), payload_dict["date"])
+            elif msg_type == "transcript_file":
+                self.ingest_transcript_file(Path(payload_dict["filepath"]))
+            else:
+                logger.warning(f"Unknown msg_type: {msg_type}")
 
             con.execute(
                 "UPDATE queue_messages SET status = 'DONE', consumed_at = NOW() WHERE id = ?",
@@ -340,12 +350,14 @@ ORDER BY ticker, date;
 
 **Purpose:** Quarterly sector-level performance ranking to identify sector rotation patterns.
 
+> **Note:** `silver_fundamentals` stores sector as key-value pairs (metric='sector', value='Information Technology'), NOT as a `gics_sector` column. The pivot pattern is required.
+
 **SQL:**
 ```sql
 CREATE OR REPLACE VIEW v_sector_rotation AS
 WITH sector_daily AS (
     SELECT
-        f.gics_sector,
+        MAX(CASE WHEN f.metric = 'sector' THEN f.value END) AS sector,
         p.date,
         EXTRACT(YEAR FROM p.date) AS year,
         EXTRACT(QUARTER FROM p.date) AS quarter,
@@ -355,12 +367,12 @@ WITH sector_daily AS (
         COUNT(DISTINCT p.ticker) AS ticker_count
     FROM silver_price p
     LEFT JOIN silver_fundamentals f ON p.ticker = f.ticker
-    WHERE f.gics_sector IS NOT NULL
-    GROUP BY f.gics_sector, p.date, year, quarter
+    WHERE f.metric = 'sector' OR f.metric IS NULL
+    GROUP BY sector, p.date, year, quarter
 ),
 sector_quarterly AS (
     SELECT
-        gics_sector,
+        sector,
         year,
         quarter,
         AVG(avg_close) AS avg_close,
@@ -369,18 +381,18 @@ sector_quarterly AS (
         AVG(ticker_count) AS avg_ticker_count,
         RANK() OVER (
             PARTITION BY year, quarter
-            ORDER BY (AVG(avg_close) - LAG(AVG(avg_close)) OVER (PARTITION BY gics_sector ORDER BY year, quarter))
-                     / NULLIF(LAG(AVG(avg_close)) OVER (PARTITION BY gics_sector ORDER BY year, quarter), 0)
+            ORDER BY (AVG(avg_close) - LAG(AVG(avg_close)) OVER (PARTITION BY sector ORDER BY year, quarter))
+                     / NULLIF(LAG(AVG(avg_close)) OVER (PARTITION BY sector ORDER BY year, quarter), 0)
                      DESC
         ) AS momentum_rank
     FROM sector_daily
-    GROUP BY gics_sector, year, quarter
+    GROUP BY sector, year, quarter
 )
 SELECT * FROM sector_quarterly
 ORDER BY year, quarter, momentum_rank;
 ```
 
-**Columns:** `gics_sector, year, quarter, avg_close, total_volume, avg_volatility, avg_ticker_count, momentum_rank`
+**Columns:** `sector, year, quarter, avg_close, total_volume, avg_volatility, avg_ticker_count, momentum_rank`
 
 ---
 
@@ -437,51 +449,44 @@ WITH return_series AS (
             / NULLIF(LAG(close, 1) OVER (PARTITION BY ticker ORDER BY date), 0) AS daily_return
     FROM silver_price
 ),
+ar_input AS (
+    SELECT
+        ticker, date, close, daily_return,
+        LAG(daily_return, 1) OVER (PARTITION BY ticker ORDER BY date) AS lag_return
+    FROM return_series
+),
 ar_coeffs AS (
     SELECT
-        ticker,
-        date,
-        close,
-        daily_return,
-        LAG(daily_return, 1) OVER (PARTITION BY ticker ORDER BY date) AS lag_return,
-        REGR_SLOPE(
-            daily_return,
-            LAG(daily_return, 1) OVER (PARTITION BY ticker ORDER BY date)
-        ) OVER w AS beta_ar1,
-        REGR_INTERCEPT(
-            daily_return,
-            LAG(daily_return, 1) OVER (PARTITION BY ticker ORDER BY date)
-        ) OVER w AS alpha_ar1,
-        REGR_R2(
-            daily_return,
-            LAG(daily_return, 1) OVER (PARTITION BY ticker ORDER BY date)
-        ) OVER w AS r_squared_ar1,
-        REGR_COUNT(
-            daily_return,
-            LAG(daily_return, 1) OVER (PARTITION BY ticker ORDER BY date)
-        ) OVER w AS n_obs
-    FROM return_series
-    WINDOW w AS (PARTITION BY ticker ORDER BY date ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING)
+        ticker, date, close, daily_return, lag_return,
+        REGR_SLOPE(daily_return, lag_return) AS beta_ar1,
+        REGR_INTERCEPT(daily_return, lag_return) AS alpha_ar1,
+        REGR_R2(daily_return, lag_return) AS r_squared_ar1,
+        REGR_COUNT(daily_return, lag_return) AS n_obs
+    FROM ar_input
+    WHERE lag_return IS NOT NULL
 )
 SELECT
-    ticker, date, close,
-    daily_return,
-    ROUND(alpha_ar1, 8) AS alpha_ar1,    -- intercept: long-term mean return
-    ROUND(beta_ar1, 8) AS beta_ar1,       -- slope: |β|<1 implies mean reversion; β≈0 implies random walk
-    ROUND(r_squared_ar1, 6) AS r_squared_ar1,  -- fraction of variance explained by lag
+    ticker, date, close, daily_return,
+    ROUND(alpha_ar1, 8) AS alpha_ar1,
+    ROUND(beta_ar1, 8) AS beta_ar1,
+    ROUND(r_squared_ar1, 6) AS r_squared_ar1,
     n_obs
 FROM ar_coeffs
 WHERE beta_ar1 IS NOT NULL AND n_obs >= 20
 ORDER BY ticker, date;
 ```
 
+> **Note on window syntax:** This version uses REGR_* as standard ordered-set aggregates without a custom `ROWS BETWEEN` frame, relying on DuckDB's default framing behavior. If the beta is unstable at the tail of the series, wrap in a subquery with `WHERE rn >= 20` using `ROW_NUMBER()` to require a minimum observation window.
+
 **Columns:** `ticker, date, close, daily_return, alpha_ar1, beta_ar1, r_squared_ar1, n_obs`
 
 **Interpretation for presentation:**
-- `|β| < 1`: Mean-reverting process (deviations decay over time)
-- `β ≈ 0`: Random walk (past returns do not predict future)
-- `β > 0.5`: Momentum (positive autocorrelation)
-- `R² > 0.1`: Statistically meaningful predictive signal
+- `β ≈ 1`: Random walk (unit root); past returns do NOT predict future (weak-form market efficiency)
+- `β ≈ 0`: No linear autocorrelation (white noise / uncorrelated returns)
+- `|β| < 1`: Covariance-stationary AR(1); deviations decay exponentially over time
+- `|β| > 1`: Explosive (non-stationary); not expected in daily equity returns
+- `R²`: Fraction of variance explained by past return; meaningful only alongside N and β
+- **Practical note:** In equity returns, β is typically close to 0 (daily returns are nearly unpredictable)
 
 ---
 
@@ -513,9 +518,9 @@ Add to all pages:
 
 | File | Purpose |
 |------|---------|
-| `tests/test_data_provider.py` | Unit tests for SPXDataProvider methods |
-| `tests/test_ingestion_engine.py` | Batch insert, audit status, queue consumer |
-| `gold/tests/test_gold_views.py` | Extend to all 9 views |
+| `tests/test_data_provider.py` | Unit tests for SPXDataProvider methods (repo root `tests/` directory) |
+| `tests/test_ingestion_engine.py` | Batch insert, audit status, queue consumer (repo root `tests/` directory) |
+| `gold/tests/test_gold_views.py` | Extend to all 9 views (existing `gold/tests/` directory) |
 
 ### 6.2 GitHub Actions CI/CD
 
@@ -572,11 +577,13 @@ jobs:
 12. Add `v_ar1_time_series`
 13. Update `build_gold_layer.py` and `test_gold_views.py`
 
-### Phase 4: Dashboard + CI/CD (Day 3-4)
+### Phase 4: Dashboard + CI/CD (Day 4-5)
 14. Add new dashboard pages
 15. Add `tests/test_data_provider.py`
 16. Add `tests/test_ingestion_engine.py`
 17. Add `.github/workflows/test.yml`
+
+> **Time estimate:** 5 working days total (1 day bug fixes, 2 days message broker + Gold views, 1.5 days dashboard + tests, 0.5 days CI/CD)
 
 ---
 

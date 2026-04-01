@@ -17,6 +17,7 @@ EXPECTED_VIEWS = [
     "v_ticker_profile",
     "v_fundamental_snapshot",
     "v_sentiment_price_view",
+    "v_sector_rotation",
 ]
 
 
@@ -175,6 +176,35 @@ def render_sentiment_price(sentiment_price: pd.DataFrame) -> None:
             st.info("No non-null pairs for sentiment and 1-day return.")
 
 
+def sector_rotation_page(con):
+    """v_sector_rotation — quarterly sector performance ranking."""
+    st.header("Sector Rotation")
+    st.caption("Data source: v_sector_rotation")
+
+    df = con.execute("SELECT * FROM v_sector_rotation ORDER BY year, quarter, momentum_rank").fetchdf()
+
+    if df.empty:
+        st.warning("No sector rotation data available.")
+        return
+
+    df["yearq"] = df["year"] * 10 + df["quarter"]
+    latest_q = df["yearq"].max()
+    latest = df[df["yearq"] == latest_q].sort_values("momentum_rank")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Sectors tracked", df["sector"].nunique())
+    with col2:
+        st.metric("Quarters covered", df[["year", "quarter"]].drop_duplicates().shape[0])
+
+    st.subheader(f"Latest Quarter ({latest['year'].iloc[0]} Q{latest['quarter'].iloc[0]}) — Sector Ranking")
+    st.dataframe(latest[["momentum_rank", "sector", "avg_close", "avg_volatility", "total_volume"]], use_container_width=True)
+
+    st.subheader("Sector Momentum Rank Over Time")
+    pivot = df.pivot_table(index="sector", columns="yearq", values="momentum_rank")
+    st.dataframe(pivot, use_container_width=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="SPX Gold Dashboard", layout="wide")
     st.title("SPX 500 Data Pipeline - Phase 6 Dashboard")
@@ -207,6 +237,7 @@ def main() -> None:
             "Ticker Profile",
             "Fundamental Snapshot",
             "Sentiment Price View",
+            "Sector Rotation",
         ],
     )
     ticker_option = st.sidebar.selectbox("Ticker (optional)", ["All"] + ticker_list)
@@ -233,6 +264,8 @@ def main() -> None:
         render_fundamental_snapshot(fundamental_snapshot, selected_ticker)
     elif page == "Sentiment Price View":
         render_sentiment_price(sentiment_price)
+    elif page == "Sector Rotation":
+        sector_rotation_page(conn)
 
 
 if __name__ == "__main__":

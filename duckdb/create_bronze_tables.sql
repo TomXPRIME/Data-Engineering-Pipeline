@@ -50,3 +50,16 @@ CREATE TABLE IF NOT EXISTS raw_transcript_index (
     text_hash   VARCHAR(64),
     received_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Message queue for event-driven ingestion (replaces watchdog)
+CREATE SEQUENCE IF NOT EXISTS queue_messages_seq;
+CREATE TABLE IF NOT EXISTS queue_messages (
+    id          BIGINT DEFAULT NEXTVAL('queue_messages_seq') PRIMARY KEY,
+    source      VARCHAR(50),
+    msg_type    VARCHAR(100),         -- 'price_file', 'fundamental_file', 'transcript_file'
+    payload     VARCHAR(1000),        -- JSON: {"filepath": "...", "ticker": "AAPL", "date": "2024-01-15"}
+    status      VARCHAR(20) DEFAULT 'PENDING',  -- PENDING, PROCESSING, DONE, FAILED
+    created_at  TIMESTAMP DEFAULT NOW(),
+    consumed_at TIMESTAMP,
+    error_message VARCHAR(500)
+);

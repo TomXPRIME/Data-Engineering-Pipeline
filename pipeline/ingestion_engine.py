@@ -7,6 +7,7 @@ Design: docs/superpowers/specs/2026-03-20-spx-data-pipeline-design.md
 """
 
 import hashlib
+import json
 import logging
 import math
 import time
@@ -270,6 +271,52 @@ class IngestionEngine:
         logger.info(f"Scan complete. Total records ingested: {total_ingested}")
         return total_ingested
 
+    def poll_queue(self, batch_size: int = 100):
+        """
+        Poll queue_messages table and process pending messages.
+
+        Called by run_queue_mode() loop. Processes up to batch_size
+        PENDING messages per call.
+        """
+        con = self._get_connection()
+
+        rows = con.execute("""
+            SELECT id, msg_type, payload
+            FROM queue_messages
+            WHERE status = 'PENDING'
+            ORDER BY created_at
+            LIMIT ?
+        """, [batch_size]).fetchall()
+
+        processed = 0
+        for msg_id, msg_type, payload in rows:
+            try:
+                payload_dict = json.loads(payload)
+                filepath = Path(payload_dict["filepath"])
+
+                if msg_type == "price_file":
+                    self.ingest_price_file(filepath)
+                elif msg_type == "fundamental_file":
+                    self.ingest_fundamental_file(filepath, payload_dict.get("date", ""))
+                elif msg_type == "transcript_file":
+                    self.ingest_transcript_file(filepath)
+                else:
+                    logger.warning(f"Unknown msg_type: {msg_type}")
+
+                con.execute(
+                    "UPDATE queue_messages SET status = 'DONE', consumed_at = NOW() WHERE id = ?",
+                    [msg_id]
+                )
+                processed += 1
+            except Exception as e:
+                logger.warning(f"Failed to process message {msg_id}: {e}")
+                con.execute(
+                    "UPDATE queue_messages SET status = 'FAILED', error_message = ? WHERE id = ?",
+                    [str(e), msg_id]
+                )
+
+        return processed
+
 
 class LandingZoneHandler(FileSystemEventHandler):
     """FileSystemEventHandler for landing_zone changes."""
@@ -349,22 +396,49 @@ def run_watchdog(mode: str = "watch", poll_interval: float = 1.0):
     logger.info("Ingestion engine stopped.")
 
 
+def run_queue_mode(poll_interval: float = 1.0):
+    """
+    Run the ingestion engine in queue-polling mode.
+    """
+    engine = IngestionEngine()
+    logger.info("Starting ingestion engine in queue mode...")
+    logger.info("Polling queue_messages every {:.1f}s. Press Ctrl+C to stop.".format(poll_interval))
+
+    try:
+        while True:
+            processed = engine.poll_queue()
+            if processed > 0:
+                logger.info(f"Processed {processed} messages")
+            time.sleep(poll_interval)
+    except KeyboardInterrupt:
+        logger.info("Shutting down ingestion engine...")
+    finally:
+        engine.close()
+
+
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="SPX Data Pipeline - Ingestion Engine")
     parser.add_argument(
         "--mode",
-        choices=["watch", "scan"],
+        choices=["watch", "scan", "queue"],
         default="watch",
-        help="watch: continuous watchdog; scan: one-time backfill",
+        help="watch: legacy watchdog; scan: one-time backfill; queue: poll queue_messages table",
     )
     parser.add_argument(
         "--poll",
         type=float,
         default=1.0,
-        help="Poll interval in seconds (default: 1.0)",
+        help="Poll interval in seconds for queue mode (default: 1.0)",
     )
     args = parser.parse_args()
 
-    run_watchdog(mode=args.mode, poll_interval=args.poll)
+    if args.mode == "scan":
+        engine = IngestionEngine()
+        engine.scan_and_ingest()
+        engine.close()
+    elif args.mode == "queue":
+        run_queue_mode(poll_interval=args.poll)
+    else:
+        run_watchdog(mode=args.mode, poll_interval=args.poll)

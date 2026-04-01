@@ -284,3 +284,57 @@ SELECT
 FROM price_analytics
 WHERE lag5 IS NOT NULL AND lag20 IS NOT NULL AND lag60 IS NOT NULL
 ORDER BY ticker, date;
+
+-- ============================================================
+-- Person E Views: Time-Series & Autoregressive Models
+-- ============================================================
+
+-- 9. v_ar1_time_series — AR(1) autoregressive model via OLS window regression
+-- r_t = alpha + beta * r_{t-1} + epsilon
+-- beta ≈ 1: random walk; beta ≈ 0: uncorrelated returns
+CREATE OR REPLACE VIEW v_ar1_time_series AS
+WITH return_series AS (
+    SELECT
+        ticker, date, close,
+        (close - LAG(close, 1) OVER (PARTITION BY ticker ORDER BY date))
+            / NULLIF(LAG(close, 1) OVER (PARTITION BY ticker ORDER BY date), 0) AS daily_return
+    FROM silver_price
+),
+ar_input AS (
+    SELECT
+        ticker, date, close, daily_return,
+        LAG(daily_return, 1) OVER (PARTITION BY ticker ORDER BY date) AS lag_return
+    FROM return_series
+),
+ar_coeffs AS (
+    SELECT
+        ticker, date, close, daily_return, lag_return,
+        ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date) AS rn,
+        REGR_SLOPE(daily_return, lag_return) OVER (
+            PARTITION BY ticker ORDER BY date
+            ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING
+        ) AS beta_ar1,
+        REGR_INTERCEPT(daily_return, lag_return) OVER (
+            PARTITION BY ticker ORDER BY date
+            ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING
+        ) AS alpha_ar1,
+        REGR_R2(daily_return, lag_return) OVER (
+            PARTITION BY ticker ORDER BY date
+            ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING
+        ) AS r_squared_ar1,
+        REGR_COUNT(daily_return, lag_return) OVER (
+            PARTITION BY ticker ORDER BY date
+            ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING
+        ) AS n_obs
+    FROM ar_input
+    WHERE lag_return IS NOT NULL
+)
+SELECT
+    ticker, date, close, daily_return,
+    ROUND(alpha_ar1, 8) AS alpha_ar1,
+    ROUND(beta_ar1, 8) AS beta_ar1,
+    ROUND(r_squared_ar1, 6) AS r_squared_ar1,
+    n_obs
+FROM ar_coeffs
+WHERE beta_ar1 IS NOT NULL AND n_obs >= 20
+ORDER BY ticker, date;

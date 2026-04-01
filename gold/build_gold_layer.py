@@ -78,6 +78,11 @@ GOLD_VIEWS = (
     "v_ticker_profile",
     "v_fundamental_snapshot",
     "v_sentiment_price_view",
+    "v_rolling_volatility",
+    "v_momentum_signals",
+    "v_sector_rotation",
+    "v_sentiment_binned_returns",
+    "v_ar1_time_series",
 )
 
 # ---------------------------------------------------------------------------

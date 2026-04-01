@@ -205,70 +205,45 @@ def sector_rotation_page(con):
     st.dataframe(pivot, use_container_width=True)
 
 
-def main() -> None:
-    st.set_page_config(page_title="SPX Gold Dashboard", layout="wide")
-    st.title("SPX 500 Data Pipeline - Phase 6 Dashboard")
-    st.caption("Source: DuckDB Gold Views")
+def volatility_page(con):
+    """v_rolling_volatility — 20d vs 60d annualized volatility analysis."""
+    st.header("Volatility Analysis")
+    st.caption("Data source: v_rolling_volatility")
 
-    if not DB_PATH.exists():
-        st.error(f"DuckDB not found: {DB_PATH}")
-        st.stop()
+    ticker_filter = st.sidebar.text_input("Ticker (optional)", value="")
+    max_date = st.sidebar.text_input("Max date (YYYY-MM-DD)", value="2024-12-31")
 
-    conn = get_connection()
-    available_views, missing_views = check_views(conn)
-    if missing_views:
-        st.warning(
-            "Missing Gold views: "
-            + ", ".join(missing_views)
-            + ". Run `python gold/build_gold_layer.py` first."
+    query = "SELECT * FROM v_rolling_volatility WHERE date <= ?"
+    params = [max_date]
+    if ticker_filter:
+        query += " AND ticker = ?"
+        params.append(ticker_filter.upper())
+    query += " ORDER BY date DESC LIMIT 5000"
+
+    df = con.execute(query, params).fetchdf()
+
+    if df.empty:
+        st.warning("No volatility data available.")
+        return
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Tickers", df["ticker"].nunique())
+        st.metric("Date range", f"{df['date'].min()} to {df['date'].max()}")
+    with col2:
+        avg_vol = df["annualized_vol_20d"].mean()
+        st.metric("Avg 20d Vol (annualized)", f"{avg_vol:.4f}" if avg_vol else "N/A")
+
+    st.subheader("20d vs 60d Volatility Scatter")
+    scatter_df = df.dropna(subset=["annualized_vol_20d", "annualized_vol_60d"]).head(1000)
+    st.scatter_chart(
+        scatter_df[["annualized_vol_20d", "annualized_vol_60d"]].rename(
+            columns={"annualized_vol_20d": "20d Vol", "annualized_vol_60d": "60d Vol"}
         )
-    if not available_views:
-        st.stop()
-
-    ticker_profile = load_ticker_profile() if "v_ticker_profile" in available_views else pd.DataFrame()
-    ticker_list = ticker_profile["ticker"].dropna().sort_values().unique().tolist() if not ticker_profile.empty else []
-
-    st.sidebar.header("Controls")
-    page = st.sidebar.selectbox(
-        "Page",
-        [
-            "Overview",
-            "Market Daily Summary",
-            "Ticker Profile",
-            "Fundamental Snapshot",
-            "Sentiment Price View",
-            "Sector Rotation",
-            "AR(1) Model",
-        ],
-    )
-    ticker_option = st.sidebar.selectbox("Ticker (optional)", ["All"] + ticker_list)
-    selected_ticker = None if ticker_option == "All" else ticker_option
-    row_limit = st.sidebar.slider("Sentiment row limit", 100, 20000, 2000, step=100)
-
-    market_daily = load_market_daily() if "v_market_daily_summary" in available_views else pd.DataFrame()
-    fundamental_snapshot = (
-        load_fundamental_snapshot() if "v_fundamental_snapshot" in available_views else pd.DataFrame()
-    )
-    sentiment_price = (
-        load_sentiment_price(selected_ticker, row_limit)
-        if "v_sentiment_price_view" in available_views
-        else pd.DataFrame()
     )
 
-    if page == "Overview":
-        render_overview(market_daily, ticker_profile, fundamental_snapshot, sentiment_price)
-    elif page == "Market Daily Summary":
-        render_market_daily(market_daily)
-    elif page == "Ticker Profile":
-        render_ticker_profile(ticker_profile, selected_ticker)
-    elif page == "Fundamental Snapshot":
-        render_fundamental_snapshot(fundamental_snapshot, selected_ticker)
-    elif page == "Sentiment Price View":
-        render_sentiment_price(sentiment_price)
-    elif page == "Sector Rotation":
-        sector_rotation_page(conn)
-    elif page == "AR(1) Model":
-        ar1_page(conn)
+    st.subheader("Volatility Time Series (last 200 rows)")
+    st.line_chart(df[["date", "annualized_vol_20d", "annualized_vol_60d"]].head(200).set_index("date"))
 
 
 def ar1_page(con):
@@ -314,6 +289,75 @@ def ar1_page(con):
     st.dataframe(display_df, use_container_width=True)
 
     st.info("**Interpretation:** beta≈1 means random walk (past returns don't predict future). beta≈0 means uncorrelated returns (white noise). |beta|<1 means deviations decay over time.")
+
+
+def main() -> None:
+    st.set_page_config(page_title="SPX Gold Dashboard", layout="wide")
+    st.title("SPX 500 Data Pipeline - Phase 6 Dashboard")
+    st.caption("Source: DuckDB Gold Views")
+
+    if not DB_PATH.exists():
+        st.error(f"DuckDB not found: {DB_PATH}")
+        st.stop()
+
+    conn = get_connection()
+    available_views, missing_views = check_views(conn)
+    if missing_views:
+        st.warning(
+            "Missing Gold views: "
+            + ", ".join(missing_views)
+            + ". Run `python gold/build_gold_layer.py` first."
+        )
+    if not available_views:
+        st.stop()
+
+    ticker_profile = load_ticker_profile() if "v_ticker_profile" in available_views else pd.DataFrame()
+    ticker_list = ticker_profile["ticker"].dropna().sort_values().unique().tolist() if not ticker_profile.empty else []
+
+    st.sidebar.header("Controls")
+    page = st.sidebar.selectbox(
+        "Page",
+        [
+            "Overview",
+            "Market Daily Summary",
+            "Ticker Profile",
+            "Fundamental Snapshot",
+            "Sentiment Price View",
+            "Sector Rotation",
+            "Volatility",
+            "AR(1) Model",
+        ],
+    )
+    ticker_option = st.sidebar.selectbox("Ticker (optional)", ["All"] + ticker_list)
+    selected_ticker = None if ticker_option == "All" else ticker_option
+    row_limit = st.sidebar.slider("Sentiment row limit", 100, 20000, 2000, step=100)
+
+    market_daily = load_market_daily() if "v_market_daily_summary" in available_views else pd.DataFrame()
+    fundamental_snapshot = (
+        load_fundamental_snapshot() if "v_fundamental_snapshot" in available_views else pd.DataFrame()
+    )
+    sentiment_price = (
+        load_sentiment_price(selected_ticker, row_limit)
+        if "v_sentiment_price_view" in available_views
+        else pd.DataFrame()
+    )
+
+    if page == "Overview":
+        render_overview(market_daily, ticker_profile, fundamental_snapshot, sentiment_price)
+    elif page == "Market Daily Summary":
+        render_market_daily(market_daily)
+    elif page == "Ticker Profile":
+        render_ticker_profile(ticker_profile, selected_ticker)
+    elif page == "Fundamental Snapshot":
+        render_fundamental_snapshot(fundamental_snapshot, selected_ticker)
+    elif page == "Sentiment Price View":
+        render_sentiment_price(sentiment_price)
+    elif page == "Sector Rotation":
+        sector_rotation_page(conn)
+    elif page == "Volatility":
+        volatility_page(conn)
+    elif page == "AR(1) Model":
+        ar1_page(conn)
 
 
 if __name__ == "__main__":

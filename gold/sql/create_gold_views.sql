@@ -247,3 +247,40 @@ SELECT ticker, date, close,
 FROM vol
 WHERE annualized_vol_20d IS NOT NULL
 ORDER BY ticker, date;
+
+-- ============================================================
+-- Person D Views: Momentum & Trend Analytics
+-- ============================================================
+
+-- 6. v_momentum_signals — multi-period momentum + MA deviation + trend signal
+CREATE OR REPLACE VIEW v_momentum_signals AS
+WITH price_analytics AS (
+    SELECT
+        ticker, date, close,
+        LAG(close, 5) OVER w AS lag5,
+        LAG(close, 20) OVER w AS lag20,
+        LAG(close, 60) OVER w AS lag60,
+        AVG(close) OVER w20 AS ma20,
+        AVG(close) OVER w60 AS ma60
+    FROM silver_price
+    WINDOW w AS (PARTITION BY ticker ORDER BY date),
+           w20 AS (PARTITION BY ticker ORDER BY date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW),
+           w60 AS (PARTITION BY ticker ORDER BY date ROWS BETWEEN 59 PRECEDING AND CURRENT ROW)
+)
+SELECT
+    ticker, date, close,
+    ROUND((close - lag5) / NULLIF(lag5, 0), 6) AS momentum_5d,
+    ROUND((close - lag20) / NULLIF(lag20, 0), 6) AS momentum_20d,
+    ROUND((close - lag60) / NULLIF(lag60, 0), 6) AS momentum_60d,
+    ROUND((close - ma20) / NULLIF(ma20, 0), 6) AS dist_pct_from_ma20,
+    ROUND((close - ma60) / NULLIF(ma60, 0), 6) AS dist_pct_from_ma60,
+    CASE
+        WHEN close > ma20 AND close > ma60 THEN 'STRONG_UPTREND'
+        WHEN close < ma20 AND close < ma60 THEN 'STRONG_DOWNTREND'
+        WHEN close > ma20 THEN 'WEAK_UPTREND'
+        WHEN close < ma20 THEN 'WEAK_DOWNTREND'
+        ELSE 'NEUTRAL'
+    END AS trend_signal
+FROM price_analytics
+WHERE lag5 IS NOT NULL AND lag20 IS NOT NULL AND lag60 IS NOT NULL
+ORDER BY ticker, date;

@@ -184,7 +184,7 @@ cd <repo_root>
 "C:/miniconda3/envs/qf5214_project/python.exe" gold/build_gold_layer.py
 ```
 
-**Expected result:** All 4 Gold views created successfully
+**Expected result:** All 9 Gold views created successfully
 
 **View Gold view results:**
 ```bash
@@ -192,7 +192,7 @@ cd <repo_root>
 import duckdb
 con = duckdb.connect('duckdb/spx_analytics.duckdb', read_only=True)
 
-views = ['v_market_daily_summary', 'v_ticker_profile', 'v_fundamental_snapshot', 'v_sentiment_price_view']
+views = ['v_market_daily_summary', 'v_ticker_profile', 'v_fundamental_snapshot', 'v_sentiment_price_view', 'v_rolling_volatility', 'v_momentum_signals', 'v_sector_rotation', 'v_sentiment_binned_returns', 'v_ar1_time_series']
 for v in views:
     count = con.execute(f'SELECT COUNT(*) FROM {v}').fetchone()[0]
     print(f'{v}: {count:,} rows')
@@ -202,10 +202,15 @@ con.close()
 
 Expected output (2024 test):
 ```
-v_market_daily_summary: 244 rows
+v_market_daily_summary: 251 rows
 v_ticker_profile: 818 rows
 v_fundamental_snapshot: 2 rows
-v_sentiment_price_view: 1,950 rows
+v_sentiment_price_view: 1,954 rows
+v_rolling_volatility: 147,003 rows
+v_momentum_signals: 112,705 rows
+v_sector_rotation: 4 rows
+v_sentiment_binned_returns: 2 rows
+v_ar1_time_series: 135,160 rows
 ```
 
 ---
@@ -221,7 +226,7 @@ Expected output:
 ```
 --- v_market_daily_summary ---
   [PASS] View exists
-  [PASS] Has 244 rows
+  [PASS] Has 251 rows
   [PASS] All expected columns present
 --- v_ticker_profile ---
   [PASS] View exists
@@ -233,10 +238,30 @@ Expected output:
   [PASS] All expected columns present
 --- v_sentiment_price_view ---
   [PASS] View exists
-  [PASS] Has 1,950 rows
+  [PASS] Has 1,954 rows
+  [PASS] All expected columns present
+--- v_rolling_volatility ---
+  [PASS] View exists
+  [PASS] Has 147,003 rows
+  [PASS] All expected columns present
+--- v_momentum_signals ---
+  [PASS] View exists
+  [PASS] Has 112,705 rows
+  [PASS] All expected columns present
+--- v_sector_rotation ---
+  [PASS] View exists
+  [PASS] Has 4 rows
+  [PASS] All expected columns present
+--- v_sentiment_binned_returns ---
+  [PASS] View exists
+  [PASS] Has 2 rows
+  [PASS] All expected columns present
+--- v_ar1_time_series ---
+  [PASS] View exists
+  [PASS] Has 135,160 rows
   [PASS] All expected columns present
 ========================================
-Results: 12 passed, 0 failed
+Results: 27 passed, 0 failed
 ```
 
 ---
@@ -352,10 +377,15 @@ output/silver/
     └── transcript_sentiment/  Sentiment analysis Parquet ✅
     ↓ [Gold Layer - Step 5]
 duckdb/spx_analytics.duckdb (Gold Views)
-    ├── v_market_daily_summary   ✅
-    ├── v_ticker_profile         ✅
-    ├── v_fundamental_snapshot   ✅
-    └── v_sentiment_price_view   ✅
+    ├── v_market_daily_summary       ✅
+    ├── v_ticker_profile             ✅
+    ├── v_fundamental_snapshot       ✅
+    ├── v_sentiment_price_view      ✅
+    ├── v_rolling_volatility        ✅
+    ├── v_momentum_signals          ✅
+    ├── v_sector_rotation           ✅
+    ├── v_sentiment_binned_returns   ✅
+    └── v_ar1_time_series           ✅
 ```
 
 ---

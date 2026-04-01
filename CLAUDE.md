@@ -113,7 +113,7 @@ python -m streamlit run dashboard.py --server.headless true
 | `test_pipeline.py` | One-click pipeline test (2024-01, ~5-10 min) |
 | `duckdb/init_bronze.py` | Initialize DuckDB Bronze tables |
 | `gold/build_gold_layer.py` | Build Gold OLAP views from Silver Parquet |
-| `gold/tests/test_gold_views.py` | Verify all 4 Gold views (12 checks) |
+| `gold/tests/test_gold_views.py` | Verify all 9 Gold views (27 checks) |
 
 ## Documentation
 
@@ -133,9 +133,14 @@ Core packages (conda environment `qf5214_project`):
 
 ## Gold Views
 
-| View | Description | Rows (20yr) |
+| View | Description | Rows (2024 test) |
 |------|-------------|-------------|
-| `v_market_daily_summary` | Daily market aggregates | 5,284 |
+| `v_market_daily_summary` | Daily market aggregates | 251 |
 | `v_ticker_profile` | Latest ticker snapshot | 818 |
-| `v_fundamental_snapshot` | Latest financials per ticker | 595 |
-| `v_sentiment_price_view` | Sentiment + price reaction | 32,036 |
+| `v_fundamental_snapshot` | Latest financials per ticker | 2 |
+| `v_sentiment_price_view` | Sentiment + price reaction | 1,954 |
+| `v_rolling_volatility` | 20d/60d annualized volatility | 147,003 |
+| `v_momentum_signals` | Multi-period momentum + trend | 112,705 |
+| `v_sector_rotation` | Quarterly sector ranking | 4 |
+| `v_sentiment_binned_returns` | Sentiment bucket vs forward returns | 2 |
+| `v_ar1_time_series` | AR(1) OLS regression | 135,160 |

@@ -106,50 +106,48 @@ class IngestionEngine:
         File format: price_YYYY-MM-DD.csv
         Expected columns: Date, Ticker, Open, High, Low, Close, Adj Close, Volume
         """
-        filename = filepath.stem  # e.g., "price_2024-01-15"
-        try:
-            market_date = filename.replace("price_", "")
+        df = pd.read_csv(filepath)
+        file_hash = self._compute_file_hash(filepath)
+        market_date = filepath.stem.replace("price_", "")
 
-            # Read and validate CSV
-            df = pd.read_csv(filepath)
+        # Build batch rows
+        rows = []
+        for _, row in df.iterrows():
+            rows.append([
+                row["Ticker"],
+                market_date,
+                _safe_float(row.get("Open")),
+                _safe_float(row.get("High")),
+                _safe_float(row.get("Low")),
+                _safe_float(row.get("Close")),
+                _safe_float(row.get("Adj Close")),
+                _safe_int(row.get("Volume")),
+            ])
 
-            # Compute file hash
-            file_hash = self._compute_file_hash(filepath)
-
-            # Insert rows
-            con = self._get_connection()
-            rows_inserted = 0
-            for _, row in df.iterrows():
-                try:
-                    con.execute(
-                        """
-                        INSERT INTO raw_price_stream (ticker, date, open, high, low, close, adj_close, volume)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        [
-                            row["Ticker"],
-                            market_date,
-                            _safe_float(row.get("Open")),
-                            _safe_float(row.get("High")),
-                            _safe_float(row.get("Low")),
-                            _safe_float(row.get("Close")),
-                            _safe_float(row.get("Adj Close")),
-                            _safe_int(row.get("Volume")),
-                        ],
-                    )
-                    rows_inserted += 1
-                except Exception as e:
-                    logger.warning(f"Failed to insert row for {row.get('Ticker')}: {e}")
-
-            # Log audit
-            self._log_audit("price", df["Ticker"].iloc[0] if len(df) > 0 else "UNKNOWN", market_date, file_hash, "SUCCESS")
-            logger.info(f"Ingested {rows_inserted} price records from {filename}")
-            return rows_inserted
-
-        except Exception as e:
-            logger.error(f"Failed to ingest price file {filepath}: {e}")
-            self._log_audit("price", "UNKNOWN", filename, "", "FAILED", str(e))
+        if not rows:
             return 0
+
+        con = self._get_connection()
+        con.begin()
+        rows_inserted = 0
+        failed_rows = 0
+        try:
+            con.executemany(
+                "INSERT INTO raw_price_stream (ticker, date, open, high, low, close, adj_close, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                rows
+            )
+            con.commit()
+            rows_inserted = len(rows)
+            status = "SUCCESS"
+        except Exception as e:
+            con.rollback()
+            logger.error(f"Batch insert failed for {filepath}: {e}")
+            failed_rows = len(rows)
+            status = "FAILED"
+
+        self._log_audit("price", df["Ticker"].iloc[0] if len(df) > 0 else "UNKNOWN", market_date, file_hash, status)
+        logger.info(f"Ingested {rows_inserted} price records from {filepath.stem} ({failed_rows} failed)")
+        return rows_inserted
 
     def ingest_fundamental_file(self, filepath: Path, dated_dir: str) -> int:
         """

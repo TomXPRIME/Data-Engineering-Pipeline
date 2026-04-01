@@ -238,6 +238,7 @@ def main() -> None:
             "Fundamental Snapshot",
             "Sentiment Price View",
             "Sector Rotation",
+            "AR(1) Model",
         ],
     )
     ticker_option = st.sidebar.selectbox("Ticker (optional)", ["All"] + ticker_list)
@@ -266,6 +267,53 @@ def main() -> None:
         render_sentiment_price(sentiment_price)
     elif page == "Sector Rotation":
         sector_rotation_page(conn)
+    elif page == "AR(1) Model":
+        ar1_page(conn)
+
+
+def ar1_page(con):
+    """v_ar1_time_series — AR(1) autoregressive model results."""
+    st.header("AR(1) Time Series Model")
+    st.caption("Data source: v_ar1_time_series | Interpretation: beta≈1 = random walk, beta≈0 = uncorrelated returns")
+
+    ticker_filter = st.sidebar.text_input("Ticker (optional)", value="")
+
+    query = "SELECT * FROM v_ar1_time_series"
+    params = []
+    if ticker_filter:
+        query += " WHERE ticker = ?"
+        params.append(ticker_filter.upper())
+    query += " ORDER BY date DESC LIMIT 5000"
+
+    df = con.execute(query, params).fetchdf()
+
+    if df.empty:
+        st.warning("No AR(1) data available.")
+        return
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Tickers", df["ticker"].nunique())
+    with col2:
+        avg_beta = df["beta_ar1"].mean()
+        st.metric("Avg beta (mean reversion)", f"{avg_beta:.4f}" if avg_beta else "N/A")
+    with col3:
+        avg_r2 = df["r_squared_ar1"].mean()
+        st.metric("Avg R-squared", f"{avg_r2:.6f}" if avg_r2 else "N/A")
+
+    st.subheader("Beta Distribution (last 1000 rows)")
+    beta_df = df[["beta_ar1"]].dropna().tail(1000)
+    st.hist_chart(beta_df)
+
+    st.subheader("R-squared vs Beta (scatter)")
+    scatter_df = df[["beta_ar1", "r_squared_ar1"]].dropna().tail(2000)
+    st.scatter_chart(scatter_df.rename(columns={"beta_ar1": "Beta", "r_squared_ar1": "R-squared"}))
+
+    st.subheader("Sample AR(1) Coefficients")
+    display_df = df[["ticker", "date", "daily_return", "alpha_ar1", "beta_ar1", "r_squared_ar1", "n_obs"]].head(20)
+    st.dataframe(display_df, use_container_width=True)
+
+    st.info("**Interpretation:** beta≈1 means random walk (past returns don't predict future). beta≈0 means uncorrelated returns (white noise). |beta|<1 means deviations decay over time.")
 
 
 if __name__ == "__main__":

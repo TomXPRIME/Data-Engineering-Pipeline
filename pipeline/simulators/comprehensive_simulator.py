@@ -12,6 +12,7 @@ Performance optimizations:
 - Batch processing for fundamentals
 """
 
+import json
 import logging
 import time
 from datetime import datetime, timedelta
@@ -58,6 +59,20 @@ class ComprehensiveSimulator:
         logger.info("Building fundamental index...")
         self._fundamental_index: Dict[str, List[tuple]] = {}  # date -> [(ticker, report_type, freq), ...]
         self._build_fundamental_index()
+
+    def _enqueue_message(self, msg_type: str, payload: dict):
+        """Insert a message into queue_messages for downstream consumers."""
+        import duckdb
+        from pathlib import Path
+        DB_PATH = Path(__file__).parent.parent / "duckdb" / "spx_analytics.duckdb"
+        con = duckdb.connect(str(DB_PATH))
+        try:
+            con.execute(
+                "INSERT INTO queue_messages (source, msg_type, payload, status) VALUES (?, ?, ?, 'PENDING')",
+                ["simulator", msg_type, json.dumps(payload)]
+            )
+        finally:
+            con.close()
 
     def _ensure_directories(self):
         """Ensure landing zone directories exist."""
@@ -149,6 +164,10 @@ class ComprehensiveSimulator:
             if len(day_data) > 0:
                 day_data.to_csv(output_file, index=False)
                 logger.info(f"Emitted price file: {output_file} ({len(day_data)} records)")
+                self._enqueue_message("price_file", {
+                    "filepath": str(output_file),
+                    "date": date
+                })
                 return len(day_data)
             else:
                 logger.debug(f"No price data for {date} (weekend/holiday)")
@@ -181,6 +200,11 @@ class ComprehensiveSimulator:
                     import shutil
                     shutil.copy2(filepath, output_file)
                     logger.info(f"Emitted fundamental: {output_file}")
+                    self._enqueue_message("fundamental_file", {
+                        "filepath": str(output_file),
+                        "ticker": ticker,
+                        "report_type": report_type
+                    })
                     emitted += 1
                 except Exception as e:
                     logger.debug(f"Failed to emit fundamentals for {ticker}: {e}")
@@ -210,6 +234,11 @@ class ComprehensiveSimulator:
                     import shutil
                     shutil.copy2(src_path, dest_file)
                     logger.info(f"Emitted transcript: {dest_file}")
+                    self._enqueue_message("transcript_file", {
+                        "filepath": str(dest_file),
+                        "ticker": ticker,
+                        "event_date": date
+                    })
                     emitted += 1
                 except Exception as e:
                     logger.debug(f"Failed to emit transcript for {ticker}: {e}")

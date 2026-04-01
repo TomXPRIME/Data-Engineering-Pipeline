@@ -37,3 +37,4 @@ output/
 # Environment
 .env
 environment.yml
+.worktrees/

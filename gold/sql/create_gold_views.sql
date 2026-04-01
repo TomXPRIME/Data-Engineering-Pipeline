@@ -174,3 +174,45 @@ SELECT
     ROUND(AVG(sentiment_subjectivity), 4) AS avg_subjectivity
 FROM sentiment_returns
 GROUP BY sentiment_bucket;
+
+-- ============================================================
+-- Person C Views: Sector Analysis
+-- ============================================================
+
+-- 7. v_sector_rotation — quarterly sector performance ranking
+CREATE OR REPLACE VIEW v_sector_rotation AS
+WITH sector_daily AS (
+    SELECT
+        MAX(f.value) AS sector,
+        p.date,
+        EXTRACT(YEAR FROM p.date) AS year,
+        EXTRACT(QUARTER FROM p.date) AS quarter,
+        AVG(p.close) AS avg_close,
+        SUM(p.volume) AS total_volume,
+        STDDEV(p.close) AS price_std,
+        COUNT(DISTINCT p.ticker) AS ticker_count
+    FROM silver_price p
+    LEFT JOIN silver_fundamentals f
+        ON p.ticker = f.ticker AND f.metric = 'sector'
+    GROUP BY p.date, year, quarter
+),
+sector_quarterly AS (
+    SELECT
+        sector,
+        year,
+        quarter,
+        AVG(avg_close) AS avg_close,
+        SUM(total_volume) AS total_volume,
+        AVG(price_std) AS avg_volatility,
+        AVG(ticker_count) AS avg_ticker_count,
+        RANK() OVER (
+            PARTITION BY year, quarter
+            ORDER BY (AVG(avg_close) - LAG(AVG(avg_close)) OVER (PARTITION BY sector ORDER BY year, quarter))
+                     / NULLIF(LAG(AVG(avg_close)) OVER (PARTITION BY sector ORDER BY year, quarter), 0)
+                     DESC
+        ) AS momentum_rank
+    FROM sector_daily
+    GROUP BY sector, year, quarter
+)
+SELECT * FROM sector_quarterly
+ORDER BY year, quarter, momentum_rank;

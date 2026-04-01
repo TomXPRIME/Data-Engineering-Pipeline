@@ -205,16 +205,41 @@ sector_quarterly AS (
         SUM(total_volume) AS total_volume,
         AVG(price_std) AS avg_volatility,
         AVG(ticker_count) AS avg_ticker_count,
-        RANK() OVER (
-            PARTITION BY year, quarter
-            ORDER BY (AVG(avg_close) - LAG(AVG(avg_close)) OVER (PARTITION BY sector ORDER BY year, quarter))
-                     / NULLIF(LAG(AVG(avg_close)) OVER (PARTITION BY sector ORDER BY year, quarter), 0)
-                     DESC
-        ) AS momentum_rank
+        LAG(AVG(avg_close)) OVER (
+            PARTITION BY sector ORDER BY year, quarter
+        ) AS prev_avg_close
     FROM sector_daily
     GROUP BY sector, year, quarter
+),
+sector_with_return AS (
+    SELECT
+        sector,
+        year,
+        quarter,
+        avg_close,
+        total_volume,
+        avg_volatility,
+        avg_ticker_count,
+        CASE
+            WHEN prev_avg_close IS NOT NULL AND prev_avg_close != 0
+            THEN (avg_close - prev_avg_close) / prev_avg_close
+            ELSE NULL
+        END AS qoq_return
+    FROM sector_quarterly
 )
-SELECT * FROM sector_quarterly
+SELECT
+    sector,
+    year,
+    quarter,
+    avg_close,
+    total_volume,
+    avg_volatility,
+    avg_ticker_count,
+    RANK() OVER (
+        PARTITION BY year, quarter
+        ORDER BY qoq_return DESC NULLS LAST
+    ) AS momentum_rank
+FROM sector_with_return
 ORDER BY year, quarter, momentum_rank;
 
 -- ============================================================
@@ -291,7 +316,7 @@ ORDER BY ticker, date;
 
 -- 9. v_ar1_time_series — AR(1) autoregressive model via OLS window regression
 -- r_t = alpha + beta * r_{t-1} + epsilon
--- beta ≈ 1: random walk (unit root); beta ≈ 0: uncorrelated returns
+-- beta = 1: random walk (unit root). beta = 0: uncorrelated returns
 CREATE OR REPLACE VIEW v_ar1_time_series AS
 WITH return_series AS (
     SELECT
@@ -306,76 +331,36 @@ ar_input AS (
         LAG(daily_return, 1) OVER (PARTITION BY ticker ORDER BY date) AS lag_return
     FROM return_series
 ),
-ar_coeffs AS (
+ar_window AS (
     SELECT
         ticker, date, close, daily_return, lag_return,
-        COUNT(*) OVER (
-            PARTITION BY ticker ORDER BY date
-            ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING
-        ) AS n_obs,
-        SUM(lag_return) OVER (
-            PARTITION BY ticker ORDER BY date
-            ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING
-        ) AS sum_lag,
-        SUM(daily_return) OVER (
-            PARTITION BY ticker ORDER BY date
-            ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING
-        ) AS sum_ret,
-        SUM(lag_return * daily_return) OVER (
-            PARTITION BY ticker ORDER BY date
-            ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING
-        ) AS sum_lag_ret,
-        SUM(lag_return * lag_return) OVER (
-            PARTITION BY ticker ORDER BY date
-            ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING
-        ) AS sum_lag_sq,
-        SUM(daily_return * daily_return) OVER (
-            PARTITION BY ticker ORDER BY date
-            ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING
-        ) AS sum_ret_sq
+        COUNT(*) OVER w AS n_obs,
+        SUM(lag_return) OVER w AS sum_lag,
+        SUM(daily_return) OVER w AS sum_ret,
+        SUM(lag_return * daily_return) OVER w AS sum_lag_ret,
+        SUM(lag_return * lag_return) OVER w AS sum_lag_sq,
+        CORR(daily_return, lag_return) OVER w AS corr_ar1
     FROM ar_input
     WHERE lag_return IS NOT NULL
-),
-ar_ols AS (
-    SELECT
-        ticker, date, close, daily_return, lag_return, n_obs,
-        sum_lag, sum_ret, sum_lag_ret, sum_lag_sq,
-        CASE
-            WHEN n_obs >= 20 AND (n_obs * sum_lag_sq - sum_lag * sum_lag) != 0
-            THEN (n_obs * sum_lag_ret - sum_lag * sum_ret) * 1.0 / (n_obs * sum_lag_sq - sum_lag * sum_lag)
-            ELSE NULL
-        END AS beta_ar1,
-        CASE
-            WHEN n_obs >= 20 AND (n_obs * sum_lag_sq - sum_lag * sum_lag) != 0
-            THEN sum_ret * 1.0 / n_obs - ((n_obs * sum_lag_ret - sum_lag * sum_ret) * 1.0 / (n_obs * sum_lag_sq - sum_lag * sum_lag)) * (sum_lag * 1.0 / n_obs)
-            ELSE NULL
-        END AS alpha_ar1,
-        CASE
-            WHEN n_obs >= 20 AND (n_obs * sum_lag_sq - sum_lag * sum_lag) != 0
-            THEN
-                -- R-squared = 1 - SS_res / SS_tot
-                -- SS_res = sum(y - alpha - beta*x)^2 = sum(y^2) - 2*alpha*sum(y) - 2*beta*sum(x*y) + alpha^2*n + 2*alpha*beta*sum(x) + beta^2*sum(x^2)
-                -- SS_tot = sum((y - mean_y)^2) = sum(y^2) - sum(y)^2/n
-                -- Simplified using the identity: beta = cov(x,y)/var(x) and R² = corr(x,y)^2
-                -- For AR(1) with OLS: R² = (beta * cov(x,y) * n) / (n*var(y))
-                -- We use the correlation approach: R² = (cov(x,y) / (stddev(x)*stddev(y)))^2
-                POWER(
-                    ((n_obs * sum_lag_ret - sum_lag * sum_ret) * 1.0 /
-                     (n_obs * sum_lag_sq - sum_lag * sum_lag) *
-                     (n_obs * sum_lag_sq - sum_lag * sum_lag)) * 1.0 /
-                    NULLIF(n_obs * sum_ret_sq - sum_ret * sum_ret, 0),
-                    0.5
-                )
-            ELSE NULL
-        END AS r_squared_ar1
-    FROM ar_coeffs
+    WINDOW w AS (
+        PARTITION BY ticker ORDER BY date
+        ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING
+    )
 )
 SELECT
     ticker, date, close, daily_return,
-    ROUND(alpha_ar1, 8) AS alpha_ar1,
-    ROUND(beta_ar1, 8) AS beta_ar1,
-    ROUND(r_squared_ar1, 6) AS r_squared_ar1,
+    CASE
+        WHEN n_obs >= 20 AND (n_obs * sum_lag_sq - sum_lag * sum_lag) != 0
+        THEN ROUND(sum_ret * 1.0 / n_obs - ((n_obs * sum_lag_ret - sum_lag * sum_ret) * 1.0 / (n_obs * sum_lag_sq - sum_lag * sum_lag)) * (sum_lag * 1.0 / n_obs), 8)
+        ELSE NULL
+    END AS alpha_ar1,
+    CASE
+        WHEN n_obs >= 20 AND (n_obs * sum_lag_sq - sum_lag * sum_lag) != 0
+        THEN ROUND((n_obs * sum_lag_ret - sum_lag * sum_ret) * 1.0 / (n_obs * sum_lag_sq - sum_lag * sum_lag), 8)
+        ELSE NULL
+    END AS beta_ar1,
+    CASE WHEN corr_ar1 IS NOT NULL THEN ROUND(corr_ar1 * corr_ar1, 6) ELSE NULL END AS r_squared_ar1,
     n_obs
-FROM ar_ols
-WHERE beta_ar1 IS NOT NULL AND n_obs >= 20
+FROM ar_window
+WHERE n_obs >= 20
 ORDER BY ticker, date;

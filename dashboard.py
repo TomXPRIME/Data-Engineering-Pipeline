@@ -205,6 +205,35 @@ def sector_rotation_page(con):
     st.dataframe(pivot, use_container_width=True)
 
 
+def sentiment_page(con):
+    """v_sentiment_binned_returns — sentiment bucket vs forward returns."""
+    st.header("Sentiment Binned Returns")
+    st.caption("Data source: v_sentiment_binned_returns")
+
+    df = con.execute("SELECT * FROM v_sentiment_binned_returns").fetchdf()
+
+    if df.empty:
+        st.warning("No sentiment data available.")
+        return
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total transcripts", df["transcript_count"].sum())
+    with col2:
+        pos_ret = df[df["sentiment_bucket"] == "POSITIVE"]["avg_1d_return"].values
+        st.metric("Positive avg 1d return", f"{pos_ret[0]:.4f}" if len(pos_ret) > 0 else "N/A")
+    with col3:
+        neg_ret = df[df["sentiment_bucket"] == "NEGATIVE"]["avg_1d_return"].values
+        st.metric("Negative avg 1d return", f"{neg_ret[0]:.4f}" if len(neg_ret) > 0 else "N/A")
+
+    st.subheader("Average 1-Day Return by Sentiment Bucket")
+    chart_df = df[["sentiment_bucket", "avg_1d_return", "avg_5d_return"]].set_index("sentiment_bucket")
+    st.bar_chart(chart_df)
+
+    st.subheader("Full Sentiment Bucket Statistics")
+    st.dataframe(df, use_container_width=True)
+
+
 def volatility_page(con):
     """v_rolling_volatility — 20d vs 60d annualized volatility analysis."""
     st.header("Volatility Analysis")
@@ -324,6 +353,7 @@ def main() -> None:
             "Fundamental Snapshot",
             "Sentiment Price View",
             "Sector Rotation",
+            "Sentiment Analysis",
             "Volatility",
             "AR(1) Model",
         ],
@@ -354,6 +384,8 @@ def main() -> None:
         render_sentiment_price(sentiment_price)
     elif page == "Sector Rotation":
         sector_rotation_page(conn)
+    elif page == "Sentiment Analysis":
+        sentiment_page(conn)
     elif page == "Volatility":
         volatility_page(conn)
     elif page == "AR(1) Model":

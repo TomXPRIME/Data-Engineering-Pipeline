@@ -320,6 +320,48 @@ def ar1_page(con):
     st.info("**Interpretation:** beta≈1 means random walk (past returns don't predict future). beta≈0 means uncorrelated returns (white noise). |beta|<1 means deviations decay over time.")
 
 
+def momentum_page(con):
+    """v_momentum_signals — multi-period momentum + trend classification."""
+    st.header("Momentum Signals")
+    st.caption("Data source: v_momentum_signals")
+
+    ticker_filter = st.sidebar.text_input("Ticker (optional)", value="")
+
+    query = "SELECT * FROM v_momentum_signals"
+    params = []
+    if ticker_filter:
+        query += " WHERE ticker = ?"
+        params.append(ticker_filter.upper())
+    query += " ORDER BY date DESC LIMIT 5000"
+
+    df = con.execute(query, params).fetchdf()
+
+    if df.empty:
+        st.warning("No momentum data available.")
+        return
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total rows", len(df))
+    with col2:
+        up = (df["trend_signal"] == "STRONG_UPTREND").sum() + (df["trend_signal"] == "WEAK_UPTREND").sum()
+        st.metric("Uptrend signals", up)
+    with col3:
+        down = (df["trend_signal"] == "STRONG_DOWNTREND").sum() + (df["trend_signal"] == "WEAK_DOWNTREND").sum()
+        st.metric("Downtrend signals", down)
+
+    st.subheader("Trend Signal Distribution")
+    signal_counts = df["trend_signal"].value_counts()
+    st.bar_chart(signal_counts)
+
+    st.subheader("Momentum Distribution (5d)")
+    hist_df = df[["momentum_5d"]].dropna().tail(1000)
+    st.hist_chart(hist_df)
+
+    st.subheader("Sample Data")
+    st.dataframe(df.head(20), use_container_width=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="SPX Gold Dashboard", layout="wide")
     st.title("SPX 500 Data Pipeline - Phase 6 Dashboard")
@@ -356,6 +398,7 @@ def main() -> None:
             "Sentiment Analysis",
             "Volatility",
             "AR(1) Model",
+            "Momentum",
         ],
     )
     ticker_option = st.sidebar.selectbox("Ticker (optional)", ["All"] + ticker_list)
@@ -390,6 +433,8 @@ def main() -> None:
         volatility_page(conn)
     elif page == "AR(1) Model":
         ar1_page(conn)
+    elif page == "Momentum":
+        momentum_page(conn)
 
 
 if __name__ == "__main__":

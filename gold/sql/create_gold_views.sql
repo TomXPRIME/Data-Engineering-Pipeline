@@ -141,3 +141,36 @@ ASOF LEFT JOIN price_with_future p
     ON s.ticker = p.ticker
     AND p.date <= s.event_dt
 ORDER BY s.ticker, s.event_date;
+
+-- ============================================================
+-- Person C Views: Sentiment Analytics
+-- ============================================================
+
+-- 8. v_sentiment_binned_returns — sentiment bucket vs forward returns
+CREATE OR REPLACE VIEW v_sentiment_binned_returns AS
+WITH sentiment_returns AS (
+    SELECT
+        s.ticker,
+        s.event_date,
+        s.sentiment_polarity,
+        s.sentiment_subjectivity,
+        p.next_1d_return,
+        p.next_5d_return
+    FROM silver_sentiment s
+    JOIN v_sentiment_price_view p
+        ON s.ticker = p.ticker AND s.event_date = p.transcript_date
+    WHERE s.sentiment_polarity IS NOT NULL
+)
+SELECT
+    CASE
+        WHEN sentiment_polarity > 0.2 THEN 'POSITIVE'
+        WHEN sentiment_polarity < -0.2 THEN 'NEGATIVE'
+        ELSE 'NEUTRAL'
+    END AS sentiment_bucket,
+    COUNT(*) AS transcript_count,
+    ROUND(AVG(next_1d_return), 6) AS avg_1d_return,
+    ROUND(AVG(next_5d_return), 6) AS avg_5d_return,
+    ROUND(STDDEV(next_1d_return), 6) AS std_1d_return,
+    ROUND(AVG(sentiment_subjectivity), 4) AS avg_subjectivity
+FROM sentiment_returns
+GROUP BY sentiment_bucket;

@@ -1,0 +1,408 @@
+# SPX 500 数据管道 - 完整运行指南
+
+> 本文档记录在**不修改任何代码**的前提下，如何对整个项目进行完整一次性测试。
+> 环境：`qf5214_project`（Conda），Python 3.13，使用 `C:/miniconda3/envs/qf5214_project/python.exe`
+>
+> **更新状态：** 所有 pipeline schema 不匹配问题已修复，2026-04-01 全流程测试通过。
+>
+> **English version available:** [`RUN_GUIDE_en.md`](./RUN_GUIDE_en.md)
+
+---
+
+## 一、数据规模总览
+
+| 数据类型 | 源文件路径 | 规模 |
+|----------|-----------|------|
+| Price OHLCV | `data/price/spx_20yr_ohlcv_data.csv` | 818 tickers × 5284 交易日（2004-2024），约 432 万行 |
+| Fundamentals | `data/fundamental/SPX_Fundamental_History/*.csv` | 5726 个 CSV 文件（annual + quarterly） |
+| Transcripts | `data/transcript/SPX_20yr_PDF_Library_10GB/*.pdf` | 32,036 个 PDF 文件（2005-2025），1.2 GB |
+| Tickers | `data/reference/tickers.csv` | 947 个 ticker |
+
+---
+
+## 二、完整运行步骤
+
+### Step 0：环境准备
+
+确认 Conda 环境 `qf5214_project` 已安装所有依赖：
+
+```bash
+# 使用完整路径运行 Python（确保加载正确的 conda 环境）
+"C:/miniconda3/envs/qf5214_project/python.exe" -c "import pandas; import duckdb; import watchdog; import textblob; from pypdf import PdfReader; print('All dependencies OK')"
+```
+
+如依赖缺失，安装：
+```bash
+pip install -r requirements.txt
+pip install -r gold/requirements.txt
+```
+
+---
+
+### Step 1：初始化 DuckDB Bronze 表
+
+```bash
+cd <repo_root>
+"C:/miniconda3/envs/qf5214_project/python.exe" duckdb/init_bronze.py
+```
+
+预期输出：
+```
+Bronze tables created: ['ingestion_audit', 'raw_fundamental_index', 'raw_price_stream', 'raw_transcript_index']
+```
+
+---
+
+### Step 2：运行 Simulator（生成 Landing Zone 数据）
+
+使用 `-m` 方式运行（避免相对导入错误）：
+
+```bash
+cd <repo_root>
+"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.simulators.comprehensive_simulator --mode backfill --start 2004-01-02 --end 2024-12-30
+```
+
+**输出位置：**
+- `output/landing_zone/prices/price_YYYY-MM-DD.csv`（5284 个文件 × 818 tickers）
+- `output/landing_zone/fundamentals/YYYY-MM-DD/*.csv`（5726 个文件）
+- `output/landing_zone/transcripts/*.pdf`（32036 个 PDF）
+
+**预估耗时：** 20-90 分钟（主要时间消耗在 PDF 文件复制）
+
+**进度查看：**
+```bash
+ls output/landing_zone/prices/ | wc -l   # 已生成的价格文件数量
+ls output/landing_zone/transcripts/ | wc -l  # 已生成的 transcript 数量
+```
+
+**断点续传：** Simulator 使用 `output/.watermark` 文件记录最后处理日期，中断后重新运行会自动从断点继续。
+
+---
+
+### Step 3：运行 Ingestion Engine（Bronze 层摄入）
+
+```bash
+cd <repo_root>
+"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.ingestion_engine --mode scan
+```
+
+**预期结果：**
+- ✅ Price: 约 432 万行成功摄入到 `raw_price_stream`
+- ✅ Fundamentals: 5726 个文件索引摄入到 `raw_fundamental_index`
+- ✅ Transcripts: 32036 个 PDF 索引摄入到 `raw_transcript_index`
+
+**验证 Bronze 层数据：**
+```bash
+"C:/miniconda3/envs/qf5214_project/python.exe" -c "
+import duckdb
+con = duckdb.connect('duckdb/spx_analytics.duckdb', read_only=True)
+print('raw_price_stream:', con.execute('SELECT COUNT(*) FROM raw_price_stream').fetchone()[0])
+print('raw_fundamental_index:', con.execute('SELECT COUNT(*) FROM raw_fundamental_index').fetchone()[0])
+print('raw_transcript_index:', con.execute('SELECT COUNT(*) FROM raw_transcript_index').fetchone()[0])
+con.close()
+"
+```
+
+预期输出（2024 年测试数据）：
+```
+raw_price_stream: 199592 行
+raw_fundamental_index: 7 行
+raw_transcript_index: 1950 行
+```
+
+---
+
+### Step 4：运行 ELT Pipeline（Bronze → Silver）
+
+```bash
+cd <repo_root>
+
+# 4a：转换 Price（全部数据）
+"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource price
+
+# 4b：转换 Fundamentals
+"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource fundamentals
+
+# 4c：转换 Transcripts（提取 PDF 文本）
+"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource transcripts
+
+# 4d：计算 Sentiment（基于提取的文本）
+"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource sentiment
+```
+
+**预估耗时：**
+- Price: 1-3 分钟
+- Fundamentals: <1 分钟
+- Transcripts: 5-15 分钟（PDF 文本提取，取决于文件数量）
+- Sentiment: 5-10 分钟（TextBlob 情感分析）
+
+**验证 Silver 层数据：**
+```bash
+"C:/miniconda3/envs/qf5214_project/python.exe" -c "
+import duckdb
+con = duckdb.connect('duckdb/spx_analytics.duckdb', read_only=True)
+
+# Price
+df = con.execute('''
+    SELECT COUNT(*) as total_rows,
+           COUNT(DISTINCT ticker) as tickers,
+           COUNT(DISTINCT date) as trading_days
+    FROM read_parquet(\"output/silver/price/**/*.parquet\", hive_partitioning=true)
+''').fetchdf()
+print('Silver Price:', df.to_string(index=False))
+
+# Fundamentals
+df2 = con.execute('''
+    SELECT ticker, COUNT(*) as rows
+    FROM read_parquet(\"output/silver/fundamentals/*/data.parquet\", hive_partitioning=true)
+    GROUP BY ticker
+''').fetchdf()
+print('\nSilver Fundamentals (by ticker):', df2.to_string(index=False))
+
+# Sentiment
+df3 = con.execute('''
+    SELECT COUNT(*) as total, COUNT(sentiment_polarity) as with_score
+    FROM read_parquet(\"output/silver/transcript_sentiment/**/*.parquet\", hive_partitioning=true)
+''').fetchdf()
+print('\nSilver Sentiment:', df3.to_string(index=False))
+
+con.close()
+"
+```
+
+预期输出（2024 年测试）：
+```
+Silver Price: total_rows=199592, tickers=818, trading_days=244
+Silver Fundamentals: BIGGQ=658 rows, SNI=0 rows
+Silver Sentiment: total=1950, with_score=1950
+```
+
+---
+
+### Step 5：构建 Gold 层
+
+```bash
+cd <repo_root>
+"C:/miniconda3/envs/qf5214_project/python.exe" gold/build_gold_layer.py
+```
+
+**预期结果：** 所有 4 个 Gold 视图创建成功
+
+**查看 Gold 视图结果：**
+```bash
+"C:/miniconda3/envs/qf5214_project/python.exe" -c "
+import duckdb
+con = duckdb.connect('duckdb/spx_analytics.duckdb', read_only=True)
+
+views = ['v_market_daily_summary', 'v_ticker_profile', 'v_fundamental_snapshot', 'v_sentiment_price_view']
+for v in views:
+    count = con.execute(f'SELECT COUNT(*) FROM {v}').fetchone()[0]
+    print(f'{v}: {count:,} 行')
+con.close()
+"
+```
+
+预期输出（2024 年测试）：
+```
+v_market_daily_summary: 244 行
+v_ticker_profile: 818 行
+v_fundamental_snapshot: 2 行
+v_sentiment_price_view: 1,950 行
+```
+
+---
+
+### Step 6：验证 Gold 视图
+
+```bash
+cd <repo_root>
+"C:/miniconda3/envs/qf5214_project/python.exe" gold/tests/test_gold_views.py
+```
+
+预期输出：
+```
+--- v_market_daily_summary ---
+  [PASS] View exists
+  [PASS] Has 244 rows
+  [PASS] All expected columns present
+--- v_ticker_profile ---
+  [PASS] View exists
+  [PASS] Has 818 rows
+  [PASS] All expected columns present
+--- v_fundamental_snapshot ---
+  [PASS] View exists
+  [PASS] Has 2 rows
+  [PASS] All expected columns present
+--- v_sentiment_price_view ---
+  [PASS] View exists
+  [PASS] Has 1,950 rows
+  [PASS] All expected columns present
+========================================
+Results: 12 passed, 0 failed
+```
+
+---
+
+## 三、Streamlit Dashboard
+
+启动 Dashboard：
+
+```bash
+"C:/miniconda3/envs/qf5214_project/python.exe" -m streamlit run dashboard.py --server.headless true
+```
+
+访问：**http://localhost:8501**
+
+### 页面功能说明
+
+| 页面 | 数据来源 | 说明 |
+|------|----------|------|
+| **Overview** | 全部视图 | Pipeline 概览（4 个指标卡片）+ 市场趋势图 + 日均收益图 |
+| **Market Daily Summary** | `v_market_daily_summary` | 每日市场汇总表（avg_close、avg_return、total_volume） |
+| **Ticker Profile** | `v_ticker_profile` | 各 ticker 最新快照（company_name、sector、latest_close）+ Sector 分布柱状图 |
+| **Fundamental Snapshot** | `v_fundamental_snapshot` | 各 ticker 最新财务数据（revenue、net_income、assets、liabilities） |
+| **Sentiment Price View** | `v_sentiment_price_view` | 情感得分 + 价格变动散点图（sentiment_score vs next_1d_return） |
+
+### 侧边栏控件
+
+- **Ticker (optional)**：下拉选择，筛选单个 ticker 的数据
+- **Sentiment row limit**：Sentiment 页面行数限制（默认 2000）
+
+---
+
+## 四、运行时间估算（完整 20 年数据）
+
+| 阶段 | 预估时间 | 说明 |
+|------|----------|------|
+| Step 2 Simulator | 20-90 分钟 | 5284 个价格日文件 + 5726 个 fundamental 文件 + 32036 个 PDF 复制 |
+| Step 3 Ingestion | 5-15 分钟 | 432 万行 CSV + 5726 索引行 + 32036 索引行 |
+| Step 4 ELT Price | 1-3 分钟 | DuckDB SQL 去重 + Parquet 导出 |
+| Step 4 ELT Fundamentals | 1-2 分钟 | CSV unpivot + Parquet 导出 |
+| Step 4 ELT Transcripts | 5-15 分钟 | PDF 文本提取（32036 个文件） |
+| Step 4 ELT Sentiment | 5-10 分钟 | TextBlob 情感分析 |
+| Step 5 Gold | 10-30 秒 | Parquet 读入 + 视图创建 |
+| **总计** | **约 40 分钟 - 2.5 小时** | |
+
+---
+
+## 五、DuckDB 直接查询示例
+
+```sql
+-- 市场日汇总
+SELECT
+    trade_date,
+    number_of_tickers,
+    avg_close,
+    avg_return,
+    total_volume
+FROM v_market_daily_summary
+WHERE trade_date BETWEEN '2020-01-01' AND '2024-12-31'
+ORDER BY trade_date;
+
+-- 按年统计
+SELECT
+    EXTRACT(YEAR FROM trade_date) AS year,
+    COUNT(*) AS trading_days,
+    ROUND(AVG(avg_return) * 100, 2) AS avg_daily_return_pct,
+    SUM(total_volume) AS total_volume
+FROM v_market_daily_summary
+GROUP BY EXTRACT(YEAR FROM trade_date)
+ORDER BY year;
+
+-- 情感与价格变动关联（v_sentiment_price_view 示例）
+SELECT
+    ticker,
+    transcript_date,
+    sentiment_score,
+    close_on_event_date,
+    next_1d_return,
+    next_5d_return
+FROM v_sentiment_price_view
+WHERE sentiment_score IS NOT NULL
+ORDER BY transcript_date DESC
+LIMIT 20;
+
+-- Silver 层价格数据（直接查 Parquet）
+SELECT ticker, date, close, volume
+FROM read_parquet('output/silver/price/*/*.parquet', hive_partitioning=true)
+WHERE ticker = 'AAPL'
+ORDER BY date
+LIMIT 10;
+```
+
+---
+
+## 六、数据流汇总（完整运行后）
+
+```
+data/ (原始 CSV/PDF)
+    ↓ [Simulator - Step 2]
+output/landing_zone/
+    ├── prices/         5,284 个 CSV ✅
+    ├── fundamentals/   5,726 个 CSV ✅
+    └── transcripts/    32,036 个 PDF ✅
+    ↓ [Ingestion Engine - Step 3]
+duckdb/spx_analytics.duckdb (Bronze)
+    ├── raw_price_stream       4,322,232 行 ✅
+    ├── raw_fundamental_index  5,726 行 ✅
+    └── raw_transcript_index  32,036 行 ✅
+    ↓ [ELT Pipeline - Step 4]
+output/silver/
+    ├── price/          按日期分区 Parquet ✅
+    ├── fundamentals/   按 ticker 分区 Parquet ✅
+    ├── transcript_text/  PDF 文本提取 ✅
+    └── transcript_sentiment/ 情感分析 Parquet ✅
+    ↓ [Gold Layer - Step 5]
+duckdb/spx_analytics.duckdb (Gold Views)
+    ├── v_market_daily_summary   ✅
+    ├── v_ticker_profile         ✅
+    ├── v_fundamental_snapshot   ✅
+    └── v_sentiment_price_view   ✅
+```
+
+---
+
+## 七、快速验证命令（测试用小样本）
+
+如只需快速验证流程，可用以下命令测试关键路径（使用 2024 年数据）：
+
+```bash
+# 1. 初始化
+"C:/miniconda3/envs/qf5214_project/python.exe" duckdb/init_bronze.py
+
+# 2. Simulator（244 交易日）
+"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.simulators.comprehensive_simulator --mode backfill --start 2024-01-02 --end 2024-12-30
+
+# 3. Ingestion
+"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.ingestion_engine --mode scan
+
+# 4. ELT（分步骤运行）
+"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource price
+"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource fundamentals
+"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource transcripts
+"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource sentiment
+
+# 5. Gold Build & Test
+"C:/miniconda3/envs/qf5214_project/python.exe" gold/build_gold_layer.py
+"C:/miniconda3/envs/qf5214_project/python.exe" gold/tests/test_gold_views.py
+```
+
+---
+
+## 八、已知问题修复记录（2026-04-01）
+
+以下问题已修复，所有 pipeline 阶段现已正常工作：
+
+| 问题 | 原因 | 修复 | 状态 |
+|------|------|------|------|
+| Fundamentals 无法摄入 Bronze | `ingestion_engine.py` 使用了不存在的列名 `period` 和 `market_date` | 改为 `fiscal_date`（匹配 spec schema） | ✅ 已修复 |
+| Transcripts 无法摄入 Bronze | `ingestion_engine.py` 使用 `file_path`，spec 定义为 `pdf_path` | 改为 `pdf_path`，并添加缺失的 `text_hash` 列 | ✅ 已修复 |
+| ELT fundamentals 转换失败 | `elt_pipeline.py` SQL 查询 `period` 列（不存在）和 `ingested_at`（应为 `received_at`） | 改为 `fiscal_date` 和 `received_at` | ✅ 已修复 |
+| ELT transcripts 转换失败 | `elt_pipeline.py` SQL 查询 `file_path`（应为 `pdf_path`）和 `ingested_at`（应为 `received_at`） | 改为 `pdf_path` 和 `received_at` | ✅ 已修复 |
+| init_bronze.py / verify_tables.py 路径错误 | 硬编码 Windows 路径 | 改为 `Path(__file__)` 相对路径 | ✅ 已修复 |
+| build_gold_layer.py GBK 控制台编码错误 | Unicode 字符在 GBK 控制台无法输出 | 添加 ASCII 回退机制 | ✅ 已修复 |
+
+---
+
+*文档更新日期：2026-04-01*
+*Pipeline 版本：Phase 1-6 全部通过验证*

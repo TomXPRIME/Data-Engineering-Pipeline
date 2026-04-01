@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir duckdb:*)",
+      "Bash(python duckdb/init_bronze.py)",
+      "Bash(conda activate:*)",
+      "Bash(python duckdb/verify_tables.py)",
+      "Bash(conda env:*)",
+      "Bash(C:/miniconda3/envs/qf5214_project/python.exe pipeline/simulators/comprehensive_simulator.py --mode backfill --start 2004-01-02 --end 2004-01-10)",
+      "Bash(C:/miniconda3/envs/qf5214_project/python.exe -m pipeline.simulators.comprehensive_simulator --mode backfill --start 2004-01-02 --end 2004-01-10)",
+      "Bash(timeout 10 C:/miniconda3/envs/qf5214_project/python.exe -m pipeline.ingestion_engine)",
+      "Bash(C:/miniconda3/envs/qf5214_project/python.exe duckdb/init_bronze.py)",
+      "Bash(C:/miniconda3/envs/qf5214_project/python.exe -c \":*)",
+      "Bash(pkill -f \"pipeline.ingestion_engine\")",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(C:/miniconda3/envs/qf5214_project/python.exe -m pipeline.elt_pipeline)",
+      "Bash(C:/miniconda3/envs/qf5214_project/python.exe -m pipeline.elt_pipeline --resource price)",
+      "Bash(C:/miniconda3/envs/qf5214_project/python.exe gold/build_gold_layer.py)"
+    ]
+  }
+}

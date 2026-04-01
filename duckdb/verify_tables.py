@@ -1,7 +1,10 @@
 """Verify Bronze tables were created correctly"""
+from pathlib import Path
 import duckdb
 
-DB_PATH = "D:/NUS_MQF/QF5214/5214_Project_SPX_Index_Raw_Data/duckdb/spx_analytics.duckdb"
+SCRIPT_DIR = Path(__file__).parent.resolve()
+PROJECT_ROOT = SCRIPT_DIR.parent
+DB_PATH = PROJECT_ROOT / "duckdb" / "spx_analytics.duckdb"
 
 con = duckdb.connect(DB_PATH)
 

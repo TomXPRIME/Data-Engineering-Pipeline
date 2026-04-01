@@ -26,106 +26,49 @@ Gold Layer (OLAP views + Streamlit)
 |------|------|-------|
 | Price (OHLCV) | `data/price/spx_20yr_ohlcv_data.csv` | 818 tickers, 5284 trading days (2004-2024) |
 | Fundamentals | `data/fundamental/SPX_Fundamental_History/` | 5726 files, annual + quarterly |
-| PDF Transcripts | `data/transcript/SPX_20yr_PDF_Library_10GB/` | 32036 files |
+| PDF Transcripts | `data/transcript/SPX_20yr_PDF_Library_10GB/` | 32,036 files |
 | Tickers | `data/reference/tickers.csv` | 947 entries |
-
-## Project Structure
-
-```
-5214_Project_SPX_Index_Raw_Data/
-├── data/                              # Raw data (read-only)
-│   ├── price/spx_20yr_ohlcv_data.csv
-│   ├── fundamental/SPX_Fundamental_History/
-│   ├── transcript/SPX_20yr_PDF_Library_10GB/
-│   └── reference/tickers.csv
-├── pipeline/                           # Pipeline source code
-│   ├── data_provider.py               # Simulated financial API
-│   ├── ingestion_engine.py            # Bronze layer (watchdog-based)
-│   ├── elt_pipeline.py                # Bronze → Silver transform
-│   └── simulators/                   # Virtual clock simulators
-├── output/
-│   ├── landing_zone/                  # Simulator output
-│   │   ├── prices/price_YYYY-MM-DD.csv
-│   │   ├── fundamentals/YYYY-MM-DD/
-│   │   └── transcripts/
-│   └── silver/                       # Silver layer Parquet
-├── duckdb/                            # Gold layer SQL + DB file
-├── docs/superpowers/specs/           # Design documents
-├── notebooks/
-├── STANDARDS.md
-└── README.md
-```
 
 ## Quick Start
 
-### 1. Activate Environment
+### 一键测试（推荐）
 
 ```bash
-conda activate qf5214_project
+python test_pipeline.py
 ```
 
-### 2. Test DataProvider API
+自动执行：清理 → Simulator → Ingestion → ELT → Gold Build → 验证
+测试范围：2024-01-02 ~ 2024-01-31（约20个交易日），预计 5-10 分钟
+
+### 完整运行（20年数据）
 
 ```bash
-python -c "from pipeline.data_provider import SPXDataProvider; p = SPXDataProvider(); print(p.get_ticker_list()[:5])"
+# 1. 初始化 Bronze 表
+python duckdb/init_bronze.py
+
+# 2. Simulator（20年历史数据，约20-90分钟）
+python -m pipeline.simulators.comprehensive_simulator --mode backfill --start 2004-01-02 --end 2024-12-30
+
+# 3. Ingestion Engine
+python -m pipeline.ingestion_engine --mode scan
+
+# 4. ELT Pipeline
+python -m pipeline.elt_pipeline
+
+# 5. Gold Layer
+python gold/build_gold_layer.py
+
+# 6. 验证
+python gold/tests/test_gold_views.py
 ```
 
-### 3. Run Simulator (Backfill Mode)
+### Streamlit Dashboard
 
 ```bash
-python pipeline/simulators/comprehensive_simulator.py --mode backfill --start 2004-01-02 --end 2024-12-30
+python -m streamlit run dashboard.py --server.headless true
 ```
 
-### 4. Run Ingestion Engine (in another terminal)
-
-```bash
-python pipeline/ingestion_engine.py --mode watch
-```
-
-Or scan mode for one-time backfill:
-
-```bash
-python pipeline/ingestion_engine.py --mode scan
-```
-
-## Core Components
-
-### DataProvider API (`pipeline/data_provider.py`)
-
-Simulates Yahoo Finance API behavior. All data access goes through this class.
-
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `get_price(ticker, date)` | DataFrame | OHLCV price data |
-| `get_fundamentals(ticker, freq)` | dict | Fundamental data (income, balance, cashflow) |
-| `get_transcript(ticker, date)` | bytes | Raw PDF transcript |
-| `list_transcripts(ticker, year)` | list | Available transcripts |
-| `get_trading_dates(start, end)` | list | Trading dates in range |
-| `get_ticker_list()` | list | All ticker symbols |
-
-### Simulator (`pipeline/simulators/comprehensive_simulator.py`)
-
-Virtual clock that drives data generation. Advances through trading dates and emits data to landing zone.
-
-```bash
-# Backfill mode (batch historical load)
-python simulator.py --mode backfill --start 2004-01-02 --end 2024-12-30
-
-# Realtime mode (continuous with delay)
-python simulator.py --mode realtime --start 2024-01-02 --delay 1.0
-```
-
-### Ingestion Engine (`pipeline/ingestion_engine.py`)
-
-Watchdog-based monitoring of landing zone. Ingests raw data into Bronze tables.
-
-```bash
-# Watch mode (continuous monitoring)
-python ingestion_engine.py --mode watch
-
-# Scan mode (one-time backfill)
-python ingestion_engine.py --mode scan
-```
+访问 http://localhost:8501
 
 ## Implementation Phases
 
@@ -134,31 +77,43 @@ python ingestion_engine.py --mode scan
 | 1 | DataProvider API | ✅ Completed |
 | 2 | Bronze Layer (Ingestion Engine) | ✅ Completed |
 | 3 | ELT Pipeline (Transform Jobs) | ✅ Completed |
-| 4 | Silver Layer (Parquet + Sentiment) | ✅ Completed (by Phase 3 ELT) |
-| 5 | Gold Layer (OLAP Views) | 🔜 Pending |
-| 6 | Streamlit Dashboard | 🔜 Pending |
+| 4 | Silver Layer (Parquet + Sentiment) | ✅ Completed |
+| 5 | Gold Layer (OLAP Views) | ✅ Completed |
+| 6 | Streamlit Dashboard | ✅ Completed |
 
-### ELT Pipeline (`pipeline/elt_pipeline.py`)
+## Project Structure
 
-Bronze → Silver transforms:
-
-```bash
-# Run all transforms
-python pipeline/elt_pipeline.py
-
-# Run specific transform
-python pipeline/elt_pipeline.py --resource price
-python pipeline/elt_pipeline.py --resource fundamentals
-python pipeline/elt_pipeline.py --resource transcripts
-python pipeline/elt_pipeline.py --resource sentiment
 ```
-
-| Transform | Source | Output |
-|-----------|--------|--------|
-| `price` | raw_price_stream | output/silver/price/date=YYYY-MM-DD/*.parquet |
-| `fundamentals` | raw_fundamental_index | output/silver/fundamentals/ticker=XXX/data.parquet |
-| `transcripts` | raw_transcript_index | output/silver/transcript_text/ticker=XXX/date=YYYY-MM-DD/content.txt |
-| `sentiment` | transcript_text | output/silver/transcript_sentiment/ticker=XXX/date=YYYY-MM-DD/sentiment.parquet |
+5214_Project_SPX_Index_Raw_Data/
+├── data/                              # 原始数据（只读）
+│   ├── price/spx_20yr_ohlcv_data.csv
+│   ├── fundamental/SPX_Fundamental_History/
+│   ├── transcript/SPX_20yr_PDF_Library_10GB/
+│   └── reference/tickers.csv
+├── pipeline/                          # Pipeline 源代码
+│   ├── data_provider.py              # 模拟金融 API
+│   ├── ingestion_engine.py            # Bronze 层（watchdog）
+│   ├── elt_pipeline.py                # Bronze → Silver 转换
+│   └── simulators/                    # 虚拟时钟模拟器
+├── output/
+│   ├── landing_zone/                 # Simulator 输出
+│   │   ├── prices/price_YYYY-MM-DD.csv
+│   │   ├── fundamentals/YYYY-MM-DD/
+│   │   └── transcripts/
+│   └── silver/                       # Silver 层 Parquet
+├── duckdb/                            # Gold 层 SQL + DuckDB 文件
+├── gold/                              # Gold 层
+│   ├── build_gold_layer.py           # Gold 层构建脚本
+│   ├── sql/                          # Gold 视图 DDL
+│   └── tests/test_gold_views.py      # Gold 视图测试
+├── docs/                              # 文档
+│   ├── RUN_GUIDE.md                  # 详细运行指南
+│   └── ARCHIVE/                      # 已归档文档
+├── test_pipeline.py                   # 一键测试脚本
+├── dashboard.py                      # Streamlit Dashboard
+├── STANDARDS.md                      # 开发规范
+└── README.md                         # 本文件
+```
 
 ## Technology Stack
 
@@ -170,15 +125,13 @@ python pipeline/elt_pipeline.py --resource sentiment
 | ELT | DuckDB SQL + Python |
 | Sentiment | TextBlob |
 | Monitoring | Streamlit |
-| Environment | conda (qf5214_project) |
+| Environment | conda (`qf5214_project`) |
 
 ## Documentation
 
 | Document | Purpose |
 |----------|---------|
-| `docs/superpowers/specs/` | Technical design (source of truth) |
-| `STANDARDS.md` | Development standards |
-
-## License
-
-Course project - NUS MQF QF5214
+| `docs/RUN_GUIDE.md` | 详细运行指南（完整流水线步骤、数据规模估算） |
+| `docs/superpowers/specs/2026-03-20-spx-data-pipeline-design.md` | 技术设计规范（架构、API、schema） |
+| `STANDARDS.md` | 开发规范（代码风格、命名、测试、日志） |
+| `CLAUDE.md` | Claude Code 提示词配置 |

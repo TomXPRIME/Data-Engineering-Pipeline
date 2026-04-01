@@ -200,12 +200,12 @@ class ELTPipeline:
             WITH ranked AS (
                 SELECT *,
                        ROW_NUMBER() OVER (
-                           PARTITION BY ticker, report_type, period
-                           ORDER BY ingested_at DESC
+                           PARTITION BY ticker, report_type, fiscal_date
+                           ORDER BY received_at DESC
                        ) AS rn
                 FROM raw_fundamental_index
             )
-            SELECT ticker, report_type, market_date AS fiscal_date, file_path, ingested_at
+            SELECT ticker, report_type, fiscal_date, file_path, received_at
             FROM ranked
             WHERE rn = 1
         """).fetchdf()
@@ -225,7 +225,7 @@ class ELTPipeline:
                 )
                 if long_df is not None and not long_df.empty:
                     long_df["source_file_path"] = row["file_path"]
-                    long_df["ingested_at"] = row["ingested_at"]
+                    long_df["received_at"] = row["received_at"]
                     frames.append(long_df)
                     processed += 1
             except Exception as exc:
@@ -322,11 +322,11 @@ class ELTPipeline:
                 SELECT *,
                        ROW_NUMBER() OVER (
                            PARTITION BY ticker, event_date
-                           ORDER BY ingested_at DESC
+                           ORDER BY received_at DESC
                        ) AS rn
                 FROM raw_transcript_index
             )
-            SELECT ticker, event_date, file_path, ingested_at
+            SELECT ticker, event_date, pdf_path, received_at
             FROM ranked
             WHERE rn = 1
         """).fetchdf()
@@ -341,7 +341,7 @@ class ELTPipeline:
 
         for _, row in index_df.iterrows():
             try:
-                text = self._extract_pdf_text(row["file_path"])
+                text = self._extract_pdf_text(row["pdf_path"])
                 if text is None:
                     errors += 1
                     continue
@@ -362,7 +362,7 @@ class ELTPipeline:
                 processed += 1
 
             except Exception as exc:
-                logger.warning(f"Failed to extract transcript {row['file_path']}: {exc}")
+                logger.warning(f"Failed to extract transcript {row['pdf_path']}: {exc}")
                 errors += 1
 
         logger.info(

@@ -20,6 +20,48 @@ import time
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# Encoding-safe Unicode helpers (Windows GBK console compatibility)
+# ---------------------------------------------------------------------------
+try:
+    # Test if the console can encode a common Unicode character
+    "\u2713".encode(sys.stdout.encoding or "utf-8")
+    _USE_UNICODE = True
+except (UnicodeEncodeError, LookupError):
+    _USE_UNICODE = False
+
+# Box-drawing characters (ASCII fallback uses +, -, |)
+if _USE_UNICODE:
+    _BOX_TL = "\u2554"    # ╔
+    _BOX_TM = "\u2566"    # ╦
+    _BOX_TR = "\u2557"    # ╗
+    _BOX_H  = "\u2550"    # ═
+    _BOX_V  = "\u2551"    # ║
+    _BOX_ML = "\u2560"    # ╠
+    _BOX_MM = "\u256c"    # ╬
+    _BOX_MR = "\u2563"    # ╣
+    _BOX_BL = "\u255a"    # ╚
+    _BOX_BM = "\u2569"    # ╩
+    _BOX_BR = "\u255d"    # ╝
+    _CHECK  = "\u2713"   # ✓
+    _WARN   = "\u26a0"    # ⚠
+    _CROSS  = "\u2717"    # ✗
+else:
+    _BOX_TL = "+"
+    _BOX_TM = "+"
+    _BOX_TR = "+"
+    _BOX_H  = "-"
+    _BOX_V  = "|"
+    _BOX_ML = "+"
+    _BOX_MM = "+"
+    _BOX_MR = "+"
+    _BOX_BL = "+"
+    _BOX_BM = "+"
+    _BOX_BR = "+"
+    _CHECK  = "[OK]"
+    _WARN   = "[EMPTY]"
+    _CROSS  = "[FAIL]"
+
+# ---------------------------------------------------------------------------
 # Path auto-detection
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent          # gold/
@@ -66,36 +108,37 @@ def _print_summary_table(rows: list[tuple[str, str, str]]):
         col_w[1] = max(col_w[1], len(cnt) + 2)
         col_w[2] = max(col_w[2], len(status) + 2)
 
-    def _row_line(left, mid, right, fill="═"):
+    def _row_line(left, mid, right, fill=None):
+        fill = _BOX_H if fill is None else fill
         parts = [fill * w for w in col_w]
         return left + mid.join(parts) + right
 
     header_names = ("View", "Rows", "Status")
     # Top border
-    print(_row_line("╔", "╦", "╗"))
+    print(_row_line(_BOX_TL, _BOX_TM, _BOX_TR))
     # Header
     print(
-        "║"
-        + "║".join(
+        _BOX_V
+        + _BOX_V.join(
             f" {h:<{col_w[i] - 1}}" for i, h in enumerate(header_names)
         )
-        + "║"
+        + _BOX_V
     )
     # Header-body separator
-    print(_row_line("╠", "╬", "╣"))
+    print(_row_line(_BOX_ML, _BOX_MM, _BOX_MR))
     # Data rows
     for name, cnt, status in rows:
         print(
-            "║"
+            _BOX_V
             + f" {name:<{col_w[0] - 1}}"
-            + "║"
+            + _BOX_V
             + f" {cnt:>{col_w[1] - 1}}"
-            + "║"
+            + _BOX_V
             + f" {status:<{col_w[2] - 1}}"
-            + "║"
+            + _BOX_V
         )
     # Bottom border
-    print(_row_line("╚", "╩", "╝"))
+    print(_row_line(_BOX_BL, _BOX_BM, _BOX_BR))
 
 
 # ===========================================================================
@@ -190,12 +233,12 @@ def _verify_views(con) -> list[tuple[str, int | None, str]]:
         try:
             row = con.execute(f"SELECT COUNT(*) FROM {vname}").fetchone()
             count = row[0] if row else 0
-            status = "✓ OK" if count > 0 else "⚠ EMPTY"
+            status = f"{_CHECK} OK" if count > 0 else f"{_WARN} EMPTY"
             view_results.append((vname, count, status))
             logger.info(f"  {vname}: {count:,} rows")
         except Exception as exc:
             err_short = str(exc).splitlines()[0][:60]
-            view_results.append((vname, None, f"✗ {err_short}"))
+            view_results.append((vname, None, f"{_CROSS} {err_short}"))
             logger.error(f"  {vname}: FAILED — {err_short}")
     return view_results
 
@@ -387,7 +430,7 @@ Examples:
         ok = build_gold(db_path, sql_path)
 
     if ok:
-        logger.info("All Gold views are present and populated. ✓")
+        logger.info(f"All Gold views are present and populated. {_CHECK}")
     else:
         logger.warning(
             "Some Gold views are missing or empty. "

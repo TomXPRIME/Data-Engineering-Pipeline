@@ -1,12 +1,16 @@
 """Initialize DuckDB Bronze Layer tables"""
+from pathlib import Path
 import duckdb
 
-DB_PATH = "D:/NUS_MQF/QF5214/5214_Project_SPX_Index_Raw_Data/duckdb/spx_analytics.duckdb"
+SCRIPT_DIR = Path(__file__).parent.resolve()
+PROJECT_ROOT = SCRIPT_DIR.parent
+DB_PATH = PROJECT_ROOT / "duckdb" / "spx_analytics.duckdb"
+SQL_PATH = SCRIPT_DIR / "create_bronze_tables.sql"
 
 con = duckdb.connect(DB_PATH)
 
 # Execute the SQL script
-with open("D:/NUS_MQF/QF5214/5214_Project_SPX_Index_Raw_Data/duckdb/create_bronze_tables.sql", "r") as f:
+with open(SQL_PATH, "r") as f:
     sql = f.read()
 
 con.execute(sql)

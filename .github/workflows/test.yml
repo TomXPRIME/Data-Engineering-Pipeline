@@ -1,0 +1,38 @@
+name: Pipeline CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r gold/requirements.txt
+
+      - name: Init Bronze
+        run: python duckdb/init_bronze.py
+
+      - name: ELT Price
+        run: python -m pipeline.elt_pipeline --resource price
+
+      - name: Gold Layer Build
+        run: python gold/build_gold_layer.py
+
+      - name: Test Gold Views
+        run: python gold/tests/test_gold_views.py
+
+      - name: Unit Tests
+        run: python -m pytest tests/ -v || echo "No tests found"

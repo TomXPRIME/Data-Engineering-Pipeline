@@ -220,6 +220,7 @@ def _execute_gold_sql(con, sql_path: Path) -> dict[str, str]:
             results[desc] = err_msg
             logger.error(f"  [{i + 1}] FAIL — {desc}")
             logger.error(f"         {err_msg}")
+            raise SystemExit(1)
 
     return results
 
@@ -303,10 +304,12 @@ def build_gold(db_path: Path, sql_path: Path) -> bool:
 
         failures = [k for k, v in exec_results.items() if v != "OK"]
         if failures:
-            logger.warning(
-                f"{len(failures)} SQL statement(s) failed — "
-                "continuing with verification..."
+            logger.error(
+                f"{len(failures)} SQL statement(s) failed. "
+                "Exiting with error."
             )
+            con.close()
+            sys.exit(1)
 
         # 6. Verify star schema tables
         logger.info("Verifying star schema tables...")

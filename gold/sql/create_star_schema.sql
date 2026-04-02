@@ -73,11 +73,21 @@ WITH pivoted AS (
     WHERE fiscal_date IS NOT NULL
     GROUP BY ticker, fiscal_date, report_type, freq, period_date
 )
-SELECT ticker, fiscal_date, MAX(period_date) AS period_date, MAX(report_type) AS report_type,
-    MAX(freq) AS freq, MAX(revenue) AS revenue, MAX(net_income) AS net_income,
-    MAX(total_assets) AS total_assets, MAX(total_liabilities) AS total_liabilities,
-    MAX(eps) AS eps, MAX(book_value_per_share) AS book_value_per_share
-FROM pivoted GROUP BY ticker, fiscal_date ORDER BY ticker, fiscal_date;
+SELECT
+    ticker,
+    fiscal_date,
+    MAX(report_type) AS report_type,
+    MAX(freq) AS freq,
+    MAX(revenue) AS revenue,
+    MAX(net_income) AS net_income,
+    MAX(total_assets) AS total_assets,
+    MAX(total_liabilities) AS total_liabilities,
+    MAX(eps) AS eps,
+    MAX(book_value_per_share) AS book_value_per_share,
+    MAX(period_date) AS period_date
+FROM pivoted
+GROUP BY ticker, fiscal_date
+ORDER BY ticker, fiscal_date;
 
 -- -----------------------------------------------------------------------------
 -- fact_earnings_transcript: sentiment + price reaction

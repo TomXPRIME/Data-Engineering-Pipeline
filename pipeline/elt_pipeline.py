@@ -302,7 +302,10 @@ class ELTPipeline:
 
         result["ticker"] = ticker
         result["report_type"] = report_type
-        return result[["ticker", "report_type", "metric", "period_date", "value"]]
+        # Derive freq from report_type (annual/quarterly indicator)
+        freq = "annual" if "annual" in report_type else "quarterly"
+        result["freq"] = freq
+        return result[["ticker", "report_type", "metric", "period_date", "value", "freq"]]
 
     # ------------------------------------------------------------------ #
     #  Transcripts: Bronze -> Silver (text extraction)                   #

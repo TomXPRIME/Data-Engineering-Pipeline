@@ -10,12 +10,12 @@ class DimensionQuery:
     def get_tickers(sector: str = None) -> pd.DataFrame:
         with GoldDataProvider() as gdp:
             if sector:
-                return gdp.execute(f"""
+                return gdp.execute("""
                     SELECT ticker, company_name, sector, industry, valid_from, valid_to, is_current
                     FROM dim_ticker
-                    WHERE sector = '{sector}' AND is_current = True
+                    WHERE sector = ? AND is_current = True
                     ORDER BY ticker
-                """)
+                """, (sector,))
             return gdp.execute("""
                 SELECT ticker, company_name, sector, industry, valid_from, valid_to, is_current
                 FROM dim_ticker WHERE is_current = True ORDER BY ticker
@@ -25,9 +25,9 @@ class DimensionQuery:
     @st.cache_data(ttl=3600)
     def get_trading_calendar(start_date: str, end_date: str) -> pd.DataFrame:
         with GoldDataProvider() as gdp:
-            return gdp.execute(f"""
+            return gdp.execute("""
                 SELECT date, year, quarter, month, day, day_of_week, is_trading_day, is_holiday, holiday_name
                 FROM dim_date
-                WHERE date BETWEEN '{start_date}' AND '{end_date}'
+                WHERE date BETWEEN ? AND ?
                 ORDER BY date
-            """)
+            """, (start_date, end_date))

@@ -10,13 +10,13 @@ class SentimentQuery:
     def get_sentiment_view(ticker: str = None) -> pd.DataFrame:
         with GoldDataProvider() as gdp:
             if ticker:
-                return gdp.execute(f"""
+                return gdp.execute("""
                     SELECT ticker, transcript_date, sentiment_score, close_on_event,
                            next_1d_return, next_5d_return
                     FROM v_sentiment_price_view
-                    WHERE ticker = '{ticker}'
+                    WHERE ticker = ?
                     ORDER BY transcript_date DESC
-                """)
+                """, (ticker,))
             return gdp.execute("SELECT * FROM v_sentiment_price_view ORDER BY transcript_date DESC")
 
     @staticmethod

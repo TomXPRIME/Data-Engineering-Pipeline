@@ -10,11 +10,11 @@ class SectorQuery:
     def get_sector_rotation(year: int = None, quarter: int = None) -> pd.DataFrame:
         with GoldDataProvider() as gdp:
             if year and quarter:
-                return gdp.execute(f"""
+                return gdp.execute("""
                     SELECT sector, year, quarter, avg_close, total_volume, avg_volatility,
                            avg_ticker_count, qoq_return, momentum_rank
                     FROM v_sector_rotation
-                    WHERE year = {year} AND quarter = {quarter}
+                    WHERE year = ? AND quarter = ?
                     ORDER BY momentum_rank
-                """)
+                """, (year, quarter))
             return gdp.execute("SELECT * FROM v_sector_rotation ORDER BY year, quarter, momentum_rank")

@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS raw_fundamental_index (
     id          BIGINT DEFAULT NEXTVAL('raw_fundamental_index_seq') PRIMARY KEY,
     ticker      VARCHAR(20),
     report_type VARCHAR(30),
+    freq        VARCHAR(20),
     fiscal_date DATE,
     file_path   VARCHAR(500),
     received_at TIMESTAMP DEFAULT NOW()

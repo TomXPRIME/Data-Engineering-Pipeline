@@ -120,7 +120,7 @@ def main():
             st.subheader("Sentiment vs Forward Returns")
             df_binned = SentimentQuery.get_binned_returns()
             if not df_binned.empty:
-                st.bar_chart(df_binned.set_index("sentiment_bucket")["avg_forward_return"])
+                st.bar_chart(df_binned.set_index("sentiment_bucket")["avg_1d_return"])
                 st.dataframe(df_binned, use_container_width=True)
         except Exception as e:
             st.error(f"Error loading sentiment analytics: {e}")

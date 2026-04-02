@@ -115,7 +115,8 @@ python gold/tests/test_gold_views.py
 | Document | Purpose |
 |----------|---------|
 | `docs/RUN_GUIDE.md` | Detailed run guide with full-year data instructions |
-| `docs/superpowers/specs/2026-03-20-spx-data-pipeline-design.md` | Technical design (source of truth) |
+| `docs/CONSOLIDATED.md` | **Consolidated docs** — all specs integrated, contradictions resolved (code is source of truth) |
+| `docs/superpowers/specs/2026-04-02-fundamental-api-redesign-design.md` | Technical design for fundamental API redesign |
 | `STANDARDS.md` | Development standards — code style, naming, testing, logging |
 | `README.md` | Project overview — quick start, architecture, structure |
 

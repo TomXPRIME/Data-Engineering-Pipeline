@@ -125,7 +125,7 @@ python gold/tests/test_gold_views.py
 |----------|---------|
 | `docs/RUN_GUIDE.md` | Detailed run guide (Chinese) |
 | `docs/RUN_GUIDE_en.md` | Detailed run guide (English) |
-| `docs/superpowers/specs/2026-03-20-spx-data-pipeline-design.md` | Technical design (source of truth) |
+| `docs/CONSOLIDATED.md` | **Consolidated docs** — all specs integrated, contradictions resolved (code is source of truth) |
 | `docs/superpowers/specs/2026-04-02-fundamental-api-redesign-design.md` | Fundamental API redesign spec |
 | `STANDARDS.md` | Development standards |
 | `CLAUDE.md` | Claude Code instructions |

@@ -85,9 +85,10 @@ ruff check .
 | Data Type | Format | Example |
 |-----------|--------|---------|
 | Price | `landing_zone/prices/price_YYYY-MM-DD.csv` | `price_2024-01-15.csv` |
-| Fundamental | `landing_zone/fundamentals/YYYY-MM-DD/TICKER_type_freq.csv` | `2024-01-31/AAPL_income_quarterly.csv` |
-| Transcript PDF | `landing_zone/transcripts/TICKER_YYYY-MM-DD.pdf` | `AAPL_2024-02-01.pdf` |
-| Silver Parquet | `silver/price/date=YYYY-MM-DD/data.parquet` | `date=2024-01-15/data.parquet` |
+| Fundamental | `landing_zone/fundamentals/{ticker}/{report_type}_{freq}.csv` | `fundamentals/AAPL/income_quarterly.csv` |
+| Transcript PDF | `landing_zone/transcripts/TICKER_YYYY-MM-DD.pdf` | `transcripts/AAPL_2024-02-01.pdf` |
+| Silver Parquet | `silver/price/date=YYYY-MM-DD/data.parquet` | `silver/price/date=2024-01-15/data.parquet` |
+| Silver Fundamentals | `silver/fundamentals/ticker=XXX/data.parquet` | `silver/fundamentals/ticker=AAPL/data.parquet` |
 
 ### 3.2 DuckDB Table Naming
 
@@ -95,9 +96,14 @@ ruff check .
 |-------|-------------|---------|
 | Bronze | `raw_` | `raw_price_stream` |
 | Silver | `silver_` | `silver_price` |
-| Gold | `v_` (view) | `v_earnings_surprise` |
+| Gold Dim/Fact | `dim_` / `fact_` | `dim_ticker`, `fact_daily_price` |
+| Gold Views | `v_` | `v_market_daily_summary` |
 
-### 3.3 Schema Changes
+### 3.3 Gold Layer (Star Schema)
+
+Medallion + Star Schema 融合设计。见 `docs/superpowers/specs/2026-04-02-medallion-star-schema-design.md`。
+
+### 3.4 Schema Changes
 
 All table schema changes must:
 1. Create migration script (`migrations/001_add_xxx.sql`)

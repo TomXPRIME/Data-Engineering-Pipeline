@@ -44,13 +44,13 @@ def main():
     views = {
         "v_market_daily_summary": ["trade_date", "number_of_tickers", "avg_close", "avg_return", "total_volume"],
         "v_ticker_profile": ["ticker", "company_name", "sector", "latest_close", "latest_volume", "latest_trade_date"],
-        "v_fundamental_snapshot": ["ticker", "latest_report_date", "revenue", "net_income", "assets", "liabilities"],
         "v_sentiment_price_view": ["ticker", "transcript_date", "sentiment_score", "close_on_event_date", "next_1d_return", "next_5d_return"],
         "v_rolling_volatility": ["ticker", "date", "close", "annualized_vol_20d", "annualized_vol_60d", "annualized_return_20d"],
         "v_momentum_signals": ["ticker", "date", "close", "momentum_5d", "momentum_20d", "momentum_60d", "dist_pct_from_ma20", "dist_pct_from_ma60", "trend_signal"],
         "v_sector_rotation": ["sector", "year", "quarter", "avg_close", "total_volume", "avg_volatility", "avg_ticker_count", "momentum_rank"],
         "v_sentiment_binned_returns": ["sentiment_bucket", "transcript_count", "avg_1d_return", "avg_5d_return", "std_1d_return", "avg_subjectivity"],
         "v_ar1_time_series": ["ticker", "date", "close", "daily_return", "alpha_ar1", "beta_ar1", "r_squared_ar1", "n_obs"],
+        "v_fundamental_history": ["ticker", "fiscal_date", "report_type", "freq", "metric", "value"],
     }
 
     passed = failed = 0

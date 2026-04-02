@@ -3,7 +3,8 @@
 > 本文档记录在**不修改任何代码**的前提下，如何对整个项目进行完整一次性测试。
 > 环境：`qf5214_project`（Conda），Python 3.10，使用 `C:/miniconda3/envs/qf5214_project/python.exe`
 >
-> **更新状态：** Pipeline 层 fundamental API redesign 已完成（2026-04-02），Dashboard（Phase 6）待重新实现。
+> **更新状态（2026-04-02）：** Phase 5 Gold Layer 正在重建为 Star Schema，Phase 6 Dashboard 同步进行。
+> 旧版 Gold 视图（9个）将在 Star Schema 实现后被替代。
 >
 > **English version available:** [`RUN_GUIDE_en.md`](./RUN_GUIDE_en.md)
 
@@ -41,7 +42,7 @@ cd <repo_root>
 
 预期输出：
 ```
-Bronze tables created: ['ingestion_audit', 'raw_fundamental_index', 'raw_price_stream', 'raw_transcript_index']
+Bronze tables created: ['ingestion_audit', 'raw_price_stream', 'raw_fundamental_index', 'raw_transcript_index', 'queue_messages']
 ```
 
 ---
@@ -89,6 +90,8 @@ con = duckdb.connect('duckdb/spx_analytics.duckdb', read_only=True)
 print('raw_price_stream:', con.execute('SELECT COUNT(*) FROM raw_price_stream').fetchone()[0])
 print('raw_fundamental_index:', con.execute('SELECT COUNT(*) FROM raw_fundamental_index').fetchone()[0])
 print('raw_transcript_index:', con.execute('SELECT COUNT(*) FROM raw_transcript_index').fetchone()[0])
+print('queue_messages:', con.execute('SELECT COUNT(*) FROM queue_messages').fetchone()[0])
+print('ingestion_audit:', con.execute('SELECT COUNT(*) FROM ingestion_audit').fetchone()[0])
 con.close()
 "
 ```
@@ -98,6 +101,8 @@ con.close()
 raw_price_stream: 199592 行
 raw_fundamental_index: 2860 行（约 595 tickers × ~4-8 文件）
 raw_transcript_index: 1950 行
+queue_messages: 5284+ 行（price files, incremental fundamentals, transcripts）
+ingestion_audit: 5284+ 行
 ```
 
 ---
@@ -153,49 +158,42 @@ con.close()
 
 ### Step 5：构建 Gold 层
 
+> **注意（2026-04-02 redesign）：** Gold 层正在重建为 Star Schema 结构。
+> 旧版 `create_gold_views.sql` 已删除，新版使用 `create_star_schema.sql` + `create_materialized.sql` + `create_olap_views.sql`。
+> 完整说明见 `docs/superpowers/plans/2026-04-02-medallion-star-schema-plan.md`。
+
+Gold 层构建完成后（星 schema 实现后）：
+
 ```bash
 cd <repo_root>
 "C:/miniconda3/envs/qf5214_project/python.exe" gold/build_gold_layer.py
 ```
 
-**预期结果：** 10 个 Gold 视图创建成功
+**预期结果：** Star Schema 物理表 + 物化表 + OLAP 视图创建成功
 
-**查看 Gold 视图结果：**
+**查看 Gold 层结果（Star Schema 实现后）：**
 ```bash
 "C:/miniconda3/envs/qf5214_project/python.exe" -c "
 import duckdb
 con = duckdb.connect('duckdb/spx_analytics.duckdb', read_only=True)
 
-views = [
-    'v_market_daily_summary', 'v_ticker_profile', 'v_fundamental_snapshot',
-    'v_fundamental_history', 'v_sentiment_price_view', 'v_rolling_volatility',
-    'v_momentum_signals', 'v_sector_rotation', 'v_sentiment_binned_returns',
-    'v_ar1_time_series'
+tables = [
+    'dim_ticker', 'dim_date', 'fact_daily_price',
+    'fact_quarterly_fundamentals', 'fact_earnings_transcript',
+    'fact_rolling_volatility', 'fact_momentum_signals', 'fact_ar1_results'
 ]
-for v in views:
-    count = con.execute(f'SELECT COUNT(*) FROM {v}').fetchone()[0]
-    print(f'{v}: {count:,} 行')
+for t in tables:
+    count = con.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
+    print(f'{t}: {count:,} 行')
 con.close()
 "
 ```
 
-预期输出（2024 年测试）：
-```
-v_market_daily_summary: 251 行
-v_ticker_profile: 818 行
-v_fundamental_snapshot: 595 行
-v_fundamental_history: 735,163 行
-v_sentiment_price_view: 1,954 行
-v_rolling_volatility: 147,003 行
-v_momentum_signals: 112,705 行
-v_sector_rotation: 4 行
-v_sentiment_binned_returns: 2 行
-v_ar1_time_series: 135,160 行
-```
-
 ---
 
-### Step 6：验证 Gold 视图
+### Step 6：验证 Gold 层
+
+> **注意：** `gold/tests/test_gold_views.py` 当前测试旧9视图，星 schema 实现后需同步更新。
 
 ```bash
 cd <repo_root>
@@ -211,10 +209,6 @@ cd <repo_root>
 --- v_ticker_profile ---
   [PASS] View exists
   [PASS] Has 818 rows
-  [PASS] All expected columns present
---- v_fundamental_snapshot ---
-  [PASS] View exists
-  [PASS] Has 595 rows
   [PASS] All expected columns present
 --- v_sentiment_price_view ---
   [PASS] View exists
@@ -240,19 +234,29 @@ cd <repo_root>
   [PASS] View exists
   [PASS] Has 135,160 rows
   [PASS] All expected columns present
+--- v_fundamental_history ---
+  [PASS] View exists
+  [PASS] Has 735,163 rows
+  [PASS] All expected columns present
 ========================================
 Results: 27 passed, 0 failed
 ```
 
 ---
 
-## 三、Dashboard（Phase 6 — 待完成）
+## 三、Dashboard（Phase 6 — 进行中）
 
-Dashboard 已从仓库中移除（`st.hist_chart` bug + 范围问题）。
+Dashboard 正在重建为 6 Tab Bloomberg-style 界面（`docs/superpowers/plans/2026-04-02-medallion-star-schema-plan.md` Task 7）。
 
-**待实现：** Bloomberg 风格的 `Fundamental History` 页面，使用 `v_fundamental_history` 视图，支持 `cutoff_date` 参数过滤。
+设计 tab：
+- **Tab1 Market Overview** — 市场指数、涨跌幅
+- **Tab2 Stock Analysis** — 个股OHLCV + 技术指标
+- **Tab3 Fundamental History** — Bloomberg风格，`cutoff_date` 过滤
+- **Tab4 Sentiment Analytics** — 情感时序、情感桶收益
+- **Tab5 Sector Rotation** — 季度板块轮动
+- **Tab6 Risk & Performance** — 波动率、动量、AR1
 
-实现完成后恢复：
+实现完成后：
 ```bash
 "C:/miniconda3/envs/qf5214_project/python.exe" -m streamlit run dashboard.py --server.headless true
 ```
@@ -272,7 +276,9 @@ output/landing_zone/
 duckdb/spx_analytics.duckdb (Bronze)
     ├── raw_price_stream              4,322,232 行 ✅
     ├── raw_fundamental_index (含 freq 列)  5,726 行 ✅
-    └── raw_transcript_index          32,036 行 ✅
+    ├── raw_transcript_index          32,036 行 ✅
+    ├── queue_messages               PENDING/DONE 消息 ✅
+    └── ingestion_audit              审计日志 ✅
     ↓ [ELT Pipeline - Step 4]
 output/silver/
     ├── price/                    日期分区 Parquet ✅
@@ -280,17 +286,23 @@ output/silver/
     ├── transcript_text/          PDF 文本提取 ✅
     └── transcript_sentiment/     情感分析 Parquet ✅
     ↓ [Gold Layer - Step 5]
-duckdb/spx_analytics.duckdb (Gold Views, 10 个)
-    ├── v_market_daily_summary       ✅
-    ├── v_ticker_profile            ✅
-    ├── v_fundamental_snapshot      ✅
-    ├── v_fundamental_history       ✅ (新增)
-    ├── v_sentiment_price_view      ✅
-    ├── v_rolling_volatility        ✅
-    ├── v_momentum_signals         ✅
-    ├── v_sector_rotation          ✅
-    ├── v_sentiment_binned_returns  ✅
-    └── v_ar1_time_series          ✅
+duckdb/spx_analytics.duckdb (Gold Star Schema)
+    ├── dim_ticker                       (SCD Type 2) 🔄
+    ├── dim_date                         (物理化)     🔄
+    ├── fact_daily_price                           🔄
+    ├── fact_quarterly_fundamentals                🔄
+    ├── fact_earnings_transcript                   🔄
+    ├── fact_rolling_volatility        (物化)       🔄
+    ├── fact_momentum_signals          (物化)       🔄
+    ├── fact_ar1_results               (物化)       🔄
+    └── [7 OLAP views]                            🔄
+        ↓ [Dashboard - Step 6]
+output/gold/                          (物化 Parquet)
+    ├── dim_date.parquet
+    ├── dim_ticker.parquet
+    ├── fact_rolling_volatility.parquet
+    ├── fact_momentum_signals.parquet
+    └── fact_ar1_results.parquet
 ```
 
 ---
@@ -366,8 +378,6 @@ LIMIT 10;
 
 ## 八、Pipeline 层更新记录（2026-04-02）
 
-以下为 fundamental API redesign 完成后的 pipeline 变更：
-
 | 变更 | 说明 | 状态 |
 |------|------|------|
 | `SPXDataProvider.get_fundamentals(cutoff_date)` | 新增 `cutoff_date` 参数，支持 Bloomberg 风格历史数据过滤 | ✅ 已完成 |
@@ -375,8 +385,11 @@ LIMIT 10;
 | Bronze `raw_fundamental_index.freq` | 新增 `freq` 列（VARCHAR） | ✅ 已完成 |
 | Simulator `_seed_all_fundamentals()` | 替代 `_emit_all_fundamentals()`，ticker 分区存储 | ✅ 已完成 |
 | ELT `freq` 列 | Silver fundamentals parquet 包含 `freq` 字段 | ✅ 已完成 |
-| `v_fundamental_history` | 新增 Gold 视图（735,163 行，支持 fiscal_date <= cutoff 过滤） | ✅ 已完成 |
-| Dashboard Bloomberg 风格 | `render_fundamental_history` 页面（cutoff_date + ticker 选择） | ❌ 待实现 |
+| Gold Layer Star Schema | Medallion + Star Schema 融合重建 | 🔄 进行中 |
+| Dashboard 6 Tab | Bloomberg-style 6 Tab Streamlit 界面 | 🔄 进行中 |
+
+**当前架构文档：** `docs/superpowers/specs/2026-04-02-medallion-star-schema-design.md`
+**执行计划：** `docs/superpowers/plans/2026-04-02-medallion-star-schema-plan.md`
 
 ---
 

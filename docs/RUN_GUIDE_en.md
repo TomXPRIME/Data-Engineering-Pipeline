@@ -3,7 +3,8 @@
 > This document describes how to run a complete end-to-end test of the entire project **without modifying any code**.
 > Environment: `qf5214_project` (Conda), Python 3.10, using `C:/miniconda3/envs/qf5214_project/python.exe`
 >
-> **Update Status:** Pipeline-level fundamental API redesign completed (2026-04-02). Dashboard (Phase 6) pending re-implementation.
+> **Update Status (2026-04-02):** Phase 5 Gold Layer being rebuilt as Star Schema, Phase 6 Dashboard in progress.
+> Old Gold views (9) will be replaced after Star Schema implementation.
 
 ---
 
@@ -37,7 +38,7 @@ cd <repo_root>
 
 Expected output:
 ```
-Bronze tables created: ['ingestion_audit', 'raw_fundamental_index', 'raw_price_stream', 'raw_transcript_index']
+Bronze tables created: ['ingestion_audit', 'raw_price_stream', 'raw_fundamental_index', 'raw_transcript_index', 'queue_messages']
 ```
 
 ---
@@ -83,6 +84,8 @@ con = duckdb.connect('duckdb/spx_analytics.duckdb', read_only=True)
 print('raw_price_stream:', con.execute('SELECT COUNT(*) FROM raw_price_stream').fetchone()[0])
 print('raw_fundamental_index:', con.execute('SELECT COUNT(*) FROM raw_fundamental_index').fetchone()[0])
 print('raw_transcript_index:', con.execute('SELECT COUNT(*) FROM raw_transcript_index').fetchone()[0])
+print('queue_messages:', con.execute('SELECT COUNT(*) FROM queue_messages').fetchone()[0])
+print('ingestion_audit:', con.execute('SELECT COUNT(*) FROM ingestion_audit').fetchone()[0])
 con.close()
 "
 ```
@@ -92,6 +95,8 @@ Expected output (2024 test data):
 raw_price_stream: 199592 rows
 raw_fundamental_index: 2860 rows
 raw_transcript_index: 1950 rows
+queue_messages: 5284+ rows (price files, incremental fundamentals, transcripts)
+ingestion_audit: 5284+ rows
 ```
 
 ---
@@ -147,49 +152,42 @@ con.close()
 
 ### Step 5: Build Gold Layer
 
+> **Note (2026-04-02 redesign):** Gold Layer is being rebuilt as Star Schema.
+> Old `create_gold_views.sql` deleted; new design uses `create_star_schema.sql` + `create_materialized.sql` + `create_olap_views.sql`.
+> Full details: `docs/superpowers/plans/2026-04-02-medallion-star-schema-plan.md`.
+
+After Star Schema implementation:
+
 ```bash
 cd <repo_root>
 "C:/miniconda3/envs/qf5214_project/python.exe" gold/build_gold_layer.py
 ```
 
-**Expected result:** 10 Gold views created successfully
+**Expected result:** Star Schema physical tables + materialized tables + OLAP views created successfully
 
-**View Gold view results:**
+**View Gold layer results (after Star Schema):**
 ```bash
 "C:/miniconda3/envs/qf5214_project/python.exe" -c "
 import duckdb
 con = duckdb.connect('duckdb/spx_analytics.duckdb', read_only=True)
 
-views = [
-    'v_market_daily_summary', 'v_ticker_profile', 'v_fundamental_snapshot',
-    'v_fundamental_history', 'v_sentiment_price_view', 'v_rolling_volatility',
-    'v_momentum_signals', 'v_sector_rotation', 'v_sentiment_binned_returns',
-    'v_ar1_time_series'
+tables = [
+    'dim_ticker', 'dim_date', 'fact_daily_price',
+    'fact_quarterly_fundamentals', 'fact_earnings_transcript',
+    'fact_rolling_volatility', 'fact_momentum_signals', 'fact_ar1_results'
 ]
-for v in views:
-    count = con.execute(f'SELECT COUNT(*) FROM {v}').fetchone()[0]
-    print(f'{v}: {count:,} rows')
+for t in tables:
+    count = con.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
+    print(f'{t}: {count:,} rows')
 con.close()
 "
 ```
 
-Expected output (2024 test):
-```
-v_market_daily_summary: 251 rows
-v_ticker_profile: 818 rows
-v_fundamental_snapshot: 595 rows
-v_fundamental_history: 735,163 rows
-v_sentiment_price_view: 1,954 rows
-v_rolling_volatility: 147,003 rows
-v_momentum_signals: 112,705 rows
-v_sector_rotation: 4 rows
-v_sentiment_binned_returns: 2 rows
-v_ar1_time_series: 135,160 rows
-```
-
 ---
 
-### Step 6: Verify Gold Views
+### Step 6: Verify Gold Layer
+
+> **Note:** `gold/tests/test_gold_views.py` currently tests old 9 views; will need update after Star Schema implementation.
 
 ```bash
 cd <repo_root>
@@ -205,10 +203,6 @@ Expected output:
 --- v_ticker_profile ---
   [PASS] View exists
   [PASS] Has 818 rows
-  [PASS] All expected columns present
---- v_fundamental_snapshot ---
-  [PASS] View exists
-  [PASS] Has 595 rows
   [PASS] All expected columns present
 --- v_sentiment_price_view ---
   [PASS] View exists
@@ -234,19 +228,29 @@ Expected output:
   [PASS] View exists
   [PASS] Has 135,160 rows
   [PASS] All expected columns present
+--- v_fundamental_history ---
+  [PASS] View exists
+  [PASS] Has 735,163 rows
+  [PASS] All expected columns present
 ========================================
 Results: 27 passed, 0 failed
 ```
 
 ---
 
-## 3. Dashboard (Phase 6 — INCOMPLETE)
+## 3. Dashboard (Phase 6 — IN PROGRESS)
 
-Dashboard was removed from the repository (`st.hist_chart` bug + scope issues).
+Dashboard being rebuilt as 6 Tab Bloomberg-style interface (`docs/superpowers/plans/2026-04-02-medallion-star-schema-plan.md` Task 7).
 
-**Pending:** Bloomberg-style `Fundamental History` page using `v_fundamental_history` view with `cutoff_date` filtering.
+Target tabs:
+- **Tab1 Market Overview** — market index, returns
+- **Tab2 Stock Analysis** — OHLCV + technical indicators
+- **Tab3 Fundamental History** — Bloomberg-style, `cutoff_date` filtering
+- **Tab4 Sentiment Analytics** — sentiment time series, binned returns
+- **Tab5 Sector Rotation** — quarterly sector ranking
+- **Tab6 Risk & Performance** — volatility, momentum, AR1
 
-Restore when ready:
+When ready:
 ```bash
 "C:/miniconda3/envs/qf5214_project/python.exe" -m streamlit run dashboard.py --server.headless true
 ```
@@ -266,7 +270,9 @@ output/landing_zone/
 duckdb/spx_analytics.duckdb (Bronze)
     ├── raw_price_stream             4,322,232 rows ✅
     ├── raw_fundamental_index (with freq)  5,726 rows ✅
-    └── raw_transcript_index        32,036 rows ✅
+    ├── raw_transcript_index        32,036 rows ✅
+    ├── queue_messages              PENDING/DONE messages ✅
+    └── ingestion_audit             audit log ✅
     ↓ [ELT Pipeline - Step 4]
 output/silver/
     ├── price/                      Date-partitioned Parquet ✅
@@ -274,17 +280,23 @@ output/silver/
     ├── transcript_text/             PDF text extraction ✅
     └── transcript_sentiment/       Sentiment analysis Parquet ✅
     ↓ [Gold Layer - Step 5]
-duckdb/spx_analytics.duckdb (Gold Views, 10 total)
-    ├── v_market_daily_summary       ✅
-    ├── v_ticker_profile             ✅
-    ├── v_fundamental_snapshot       ✅
-    ├── v_fundamental_history       ✅ (new)
-    ├── v_sentiment_price_view       ✅
-    ├── v_rolling_volatility         ✅
-    ├── v_momentum_signals           ✅
-    ├── v_sector_rotation            ✅
-    ├── v_sentiment_binned_returns   ✅
-    └── v_ar1_time_series            ✅
+duckdb/spx_analytics.duckdb (Gold Star Schema)
+    ├── dim_ticker                       (SCD Type 2) 🔄
+    ├── dim_date                         (physicalized)     🔄
+    ├── fact_daily_price                           🔄
+    ├── fact_quarterly_fundamentals                🔄
+    ├── fact_earnings_transcript                   🔄
+    ├── fact_rolling_volatility        (materialized) 🔄
+    ├── fact_momentum_signals          (materialized) 🔄
+    ├── fact_ar1_results              (materialized) 🔄
+    └── [7 OLAP views]                            🔄
+        ↓ [Dashboard - Step 6]
+output/gold/                          (materialized Parquet)
+    ├── dim_date.parquet
+    ├── dim_ticker.parquet
+    ├── fact_rolling_volatility.parquet
+    ├── fact_momentum_signals.parquet
+    └── fact_ar1_results.parquet
 ```
 
 ---
@@ -342,8 +354,11 @@ LIMIT 10;
 | Bronze `raw_fundamental_index.freq` | Added `freq` VARCHAR column | ✅ Done |
 | Simulator `_seed_all_fundamentals()` | Replaced batch dump with ticker-partitioned seed | ✅ Done |
 | ELT `freq` column | Silver fundamentals parquet includes `freq` field | ✅ Done |
-| `v_fundamental_history` | New Gold view (735,163 rows, supports fiscal_date <= cutoff) | ✅ Done |
-| Dashboard Bloomberg page | `render_fundamental_history` with cutoff_date selector | ❌ Pending |
+| Gold Layer Star Schema | Medallion + Star Schema fusion rebuild | 🔄 In Progress |
+| Dashboard 6 Tab | Bloomberg-style 6 Tab Streamlit interface | 🔄 In Progress |
+
+**Current architecture doc:** `docs/superpowers/specs/2026-04-02-medallion-star-schema-design.md`
+**Implementation plan:** `docs/superpowers/plans/2026-04-02-medallion-star-schema-plan.md`
 
 ---
 
@@ -370,4 +385,4 @@ LIMIT 10;
 ---
 
 *Document updated: 2026-04-02*
-*Pipeline version: Phase 1-5 complete, Phase 6 Dashboard pending*
+*Pipeline version: Phase 1-4 complete, Phase 5 (Star Schema) + Phase 6 (Dashboard) in progress*

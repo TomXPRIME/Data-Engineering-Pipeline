@@ -85,6 +85,11 @@ def get_available_tickers():
     return sorted(tickers_df["ticker"].tolist())
 
 
+def _ticker_index(available: list[str]) -> int:
+    """Find the index of the current session ticker in the available list."""
+    return available.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in available else 0
+
+
 def main():
     st.title("SPX Analytics Dashboard")
 
@@ -148,7 +153,7 @@ def main():
         selected_ticker = st.selectbox(
             "Select Ticker",
             options=available_tickers,
-            index=available_tickers.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in available_tickers else 0,
+            index=_ticker_index(available_tickers),
             key="stock_analysis_ticker",
         )
         st.session_state.selected_ticker = selected_ticker
@@ -192,7 +197,7 @@ def main():
             ticker_select = st.selectbox(
                 "Select Ticker",
                 options=available_tickers,
-                index=available_tickers.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in available_tickers else 0,
+                index=_ticker_index(available_tickers),
                 key="fundamental_ticker",
             )
             st.session_state.selected_ticker = ticker_select
@@ -212,7 +217,7 @@ def main():
         selected_ticker = st.selectbox(
             "Select Ticker",
             options=available_tickers,
-            index=available_tickers.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in available_tickers else 0,
+            index=_ticker_index(available_tickers),
             key="sentiment_ticker",
         )
         st.session_state.selected_ticker = selected_ticker
@@ -267,7 +272,7 @@ def main():
         selected_ticker = st.selectbox(
             "Select Ticker",
             options=available_tickers,
-            index=available_tickers.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in available_tickers else 0,
+            index=_ticker_index(available_tickers),
             key="risk_ticker",
         )
         st.session_state.selected_ticker = selected_ticker

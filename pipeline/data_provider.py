@@ -119,13 +119,17 @@ class SPXDataProvider:
 
         return result.reset_index(drop=True)
 
-    def get_fundamentals(self, ticker: str, freq: str = "quarterly") -> dict:
+    def get_fundamentals(self, ticker: str, freq: str = "quarterly", cutoff_date: Optional[str] = None) -> dict:
         """
         Get fundamental data for a ticker.
 
         Args:
             ticker: Stock ticker symbol (e.g., 'AAPL')
             freq: 'annual' or 'quarterly' (default: 'quarterly')
+            cutoff_date: If provided, only return fiscal periods with period_date <= cutoff_date.
+                         Simulates "knowledge cutoff" — as of a given date, you can only see
+                         financial data that would have been publicly available.
+                         Format: 'YYYY-MM-DD' or 'YYYYQn' or 'YYYY' for annual.
 
         Returns:
             dict with keys: 'income', 'balance', 'cashflow', 'profile'
@@ -139,9 +143,14 @@ class SPXDataProvider:
             >>> provider = SPXDataProvider()
             >>> data = provider.get_fundamentals('AAPL', 'quarterly')
             >>> print(data.keys())  # ['income', 'balance', 'cashflow', 'profile']
+            >>> cutoff_data = provider.get_fundamentals('AAPL', 'quarterly', cutoff_date='2020-12-31')
         """
         if freq not in ("annual", "quarterly"):
             raise ValueError(f"freq must be 'annual' or 'quarterly', got '{freq}'")
+
+        # Validate ticker exists
+        if ticker not in self._load_tickers():
+            raise ValueError(f"Ticker '{ticker}' not found in dataset")
 
         result = {}
 
@@ -153,6 +162,9 @@ class SPXDataProvider:
             if filepath.exists():
                 try:
                     df = pd.read_csv(filepath, index_col=0)
+                    if cutoff_date is not None:
+                        valid_cols = [c for c in df.columns if c <= cutoff_date]
+                        df = df[valid_cols]
                     result[report_type] = df
                 except Exception as e:
                     raise DataIntegrityError(f"Corrupted file {filepath}: {e}")

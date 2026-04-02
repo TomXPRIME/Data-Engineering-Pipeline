@@ -25,6 +25,15 @@ def test_sector_change_creates_new_row():
     scd_rows = _detect_scd_changes(records)
     aapl_rows = [r for r in scd_rows if r["ticker"] == "AAPL"]
     assert len(aapl_rows) == 2, f"Expected 2 AAPL rows (2 versions), got {len(aapl_rows)}"
+    # Verify SCD Type 2 attributes
+    # Note: valid_from is updated to 2020-01-01 because the 2019-01-01 record
+    # is followed by a 2020-01-01 record with no changes (only valid_from is updated)
+    old_row = next(r for r in aapl_rows if r["valid_from"] == "2020-01-01")
+    new_row = next(r for r in aapl_rows if r["valid_from"] == "2021-01-01")
+    assert old_row["is_current"] == False, "Old row should not be current"
+    assert old_row["valid_to"] == "2020-12-31", f"Old row valid_to should be 2020-12-31, got {old_row['valid_to']}"
+    assert new_row["is_current"] == True, "New row should be current"
+    assert new_row["valid_to"] == "2099-12-31", f"New row valid_to should be 2099-12-31, got {new_row['valid_to']}"
 
 
 def test_industry_change_creates_new_row():
@@ -37,6 +46,13 @@ def test_industry_change_creates_new_row():
     scd_rows = _detect_scd_changes(records)
     xyz_rows = [r for r in scd_rows if r["ticker"] == "XYZ"]
     assert len(xyz_rows) == 2, f"Expected 2 XYZ rows (2 versions), got {len(xyz_rows)}"
+    # Verify SCD Type 2 attributes
+    old_row = next(r for r in xyz_rows if r["valid_from"] == "2019-01-01")
+    new_row = next(r for r in xyz_rows if r["valid_from"] == "2021-01-01")
+    assert old_row["is_current"] == False, "Old row should not be current"
+    assert old_row["valid_to"] == "2020-12-31", f"Old row valid_to should be 2020-12-31, got {old_row['valid_to']}"
+    assert new_row["is_current"] == True, "New row should be current"
+    assert new_row["valid_to"] == "2099-12-31", f"New row valid_to should be 2099-12-31, got {new_row['valid_to']}"
 
 
 def test_no_change_single_row():

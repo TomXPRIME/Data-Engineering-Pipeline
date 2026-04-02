@@ -36,10 +36,9 @@ PROJECT_ROOT = Path(__file__).parent.parent
 SILVER_FUND_DIR = PROJECT_ROOT / "output" / "silver" / "fundamentals"
 RAW_FUND_DIR = PROJECT_ROOT / "data" / "fundamental" / "SPX_Fundamental_History"
 OUTPUT_PATH = PROJECT_ROOT / "output" / "gold" / "dim_ticker.parquet"
-OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-# Far-future date for open-ended intervals
-FUTURE_DATE = "2099-12-31"
+# SCD Type 2 open-ended date constant
+SCD_OPEN_ENDED_DATE = "2099-12-31"
 
 
 def _date_minus_days(date_str: str, days: int) -> str:
@@ -97,7 +96,7 @@ def _detect_scd_changes(records: list[dict]) -> list[dict]:
                     "sector": record["sector"],
                     "industry": record["industry"],
                     "valid_from": record["report_date"],
-                    "valid_to": FUTURE_DATE,
+                    "valid_to": SCD_OPEN_ENDED_DATE,
                     "is_current": True,
                 }
                 versions.append(new_version)
@@ -113,7 +112,7 @@ def _detect_scd_changes(records: list[dict]) -> list[dict]:
                 "sector": record["sector"],
                 "industry": record["industry"],
                 "valid_from": record["report_date"],
-                "valid_to": FUTURE_DATE,
+                "valid_to": SCD_OPEN_ENDED_DATE,
                 "is_current": True,
             })
 
@@ -124,9 +123,38 @@ def _detect_scd_changes(records: list[dict]) -> list[dict]:
     return scd_rows
 
 
+def _load_profile_from_silver(ticker: str) -> dict:
+    """
+    Load ticker profile from Silver fundamentals parquet.
+
+    Raises NotImplementedError because Silver fundamentals parquet does not
+    contain profile data (sector, industry, company_name). The ELT pipeline
+    (Bronze->Silver) only processes balance, income, and cashflow statements.
+    Profile metadata was never ingested into Bronze.
+
+    Confirmed by inspecting:
+      - raw_fundamental_index report_types: only balance, income, cashflow
+      - Silver parquet metrics for AAPL: 164 financial metrics (FreeCashFlow,
+        TotalRevenue, NetIncome, etc.) - no sector/industry/shortName
+
+    This is a known architectural limitation. Profile data falls back to raw CSV.
+    """
+    raise NotImplementedError(
+        "Silver fundamentals parquet does not contain profile data "
+        "(sector/industry/company_name). Profile metadata was never ingested into "
+        "Bronze. Use _load_profile_from_raw_csv() instead."
+    )
+
+
 def _load_profile_from_raw_csv(ticker: str) -> Optional[dict]:
     """
     Load ticker profile from raw profile_metadata.csv file.
+
+    This is the authoritative source for ticker profile data (sector, industry,
+    company_name) because:
+    - Bronze raw_fundamental_index was never populated with profile metadata
+    - Therefore Silver fundamentals parquet cannot contain profile data
+    - Raw CSV files in data/fundamental/SPX_Fundamental_History/ are the source
 
     Returns dict with keys: company_name, sector, industry, or None if not found.
     """
@@ -198,6 +226,8 @@ def generate_dim_ticker() -> pd.DataFrame:
     all_records = []
 
     for ticker in tickers:
+        # Silver does not contain profile data (sector/industry/company_name).
+        # Profile metadata was never ingested into Bronze. Use raw CSV directly.
         profile = _load_profile_from_raw_csv(ticker)
         if profile is None:
             # If no profile found, create a minimal record

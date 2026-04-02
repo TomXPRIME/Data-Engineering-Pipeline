@@ -131,10 +131,11 @@ def main():
         try:
             df_sector = SectorQuery.get_sector_rotation()
             if not df_sector.empty:
-                # Filter to most recent quarter
-                latest_data = df_sector.groupby(["year", "quarter"]).first().reset_index()
+                # Get the latest quarter
+                latest_yq = df_sector[["year", "quarter"]].drop_duplicates().sort_values(["year", "quarter"]).iloc[-1]
+                latest_df = df_sector[(df_sector["year"] == latest_yq["year"]) & (df_sector["quarter"] == latest_yq["quarter"])]
                 st.subheader("Latest Quarter Sector Rankings")
-                st.dataframe(latest_data, use_container_width=True)
+                st.dataframe(latest_df.sort_values("momentum_rank"), use_container_width=True)
 
                 st.subheader("Momentum Ranking by Quarter")
                 for year in sorted(df_sector["year"].unique(), reverse=True):

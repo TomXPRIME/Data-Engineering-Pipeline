@@ -1,5 +1,4 @@
 import pandas as pd
-from pathlib import Path
 
 def test_dim_date_range():
     from gold.dim_date_generator import generate_dim_date
@@ -22,6 +21,6 @@ def test_holiday_flags():
     from gold.dim_date_generator import generate_dim_date
     df = generate_dim_date('2024-07-01', '2024-07-07')
     # July 4 2024 is Independence Day holiday
-    july4 = df[df['date'] == '2024-07-04']
-    if len(july4) > 0:
-        assert july4.iloc[0]['is_holiday'] == True
+    july4 = df[df['date'] == '2024-07-04'].iloc[0]
+    assert july4['is_holiday'] == True
+    assert july4['is_trading_day'] == False  # holiday is not a trading day

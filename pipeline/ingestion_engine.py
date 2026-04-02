@@ -189,16 +189,16 @@ class IngestionEngine:
                 INSERT INTO raw_fundamental_index (ticker, report_type, freq, fiscal_date, file_path)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                [ticker, report_type, freq, fiscal_date, str(filepath)],
+                [ticker, report_type, freq, fiscal_date if fiscal_date else None, str(filepath)],
             )
 
-            self._log_audit("fundamental", ticker, fiscal_date, file_hash, "SUCCESS")
+            self._log_audit("fundamental", ticker, fiscal_date if fiscal_date else None, file_hash, "SUCCESS")
             logger.info(f"Ingested fundamental index: {filename}")
             return 1
 
         except Exception as e:
             logger.error(f"Failed to ingest fundamental file {filepath}: {e}")
-            self._log_audit("fundamental", ticker, "", "", "FAILED", str(e))
+            self._log_audit("fundamental", ticker, None, None, "FAILED", str(e))
             return 0
 
     def ingest_transcript_file(self, filepath: Path) -> int:

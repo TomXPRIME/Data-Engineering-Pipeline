@@ -10,7 +10,7 @@ SELECT * FROM read_parquet('output/silver/price/**/*.parquet', hive_partitioning
 
 -- Fundamentals
 CREATE TABLE IF NOT EXISTS silver_fundamentals AS
-SELECT ticker, report_type, fiscal_date, metric, value, freq
+SELECT ticker, report_type, period_date AS fiscal_date, metric, value, freq
 FROM read_parquet('output/silver/fundamentals/**/*.parquet', hive_partitioning=true);
 
 -- Sentiment
@@ -91,15 +91,15 @@ WITH latest_fundamentals AS (
         ticker,
         report_type,
         metric,
-        period_date,
+        fiscal_date,
         value,
-        ROW_NUMBER() OVER (PARTITION BY ticker, report_type, metric ORDER BY period_date DESC) AS rn
+        ROW_NUMBER() OVER (PARTITION BY ticker, report_type, metric ORDER BY fiscal_date DESC) AS rn
     FROM silver_fundamentals
-    WHERE period_date IS NOT NULL
+    WHERE fiscal_date IS NOT NULL
 )
 SELECT
     ticker,
-    MAX(period_date) AS latest_report_date,
+    MAX(fiscal_date) AS latest_report_date,
     MAX(CASE WHEN metric = 'TotalRevenue' AND report_type LIKE '%income%' THEN CAST(value AS DOUBLE) END) AS revenue,
     MAX(CASE WHEN metric = 'NetIncome' AND report_type LIKE '%income%' THEN CAST(value AS DOUBLE) END) AS net_income,
     MAX(CASE WHEN metric = 'TotalAssets' AND report_type LIKE '%balance%' THEN CAST(value AS DOUBLE) END) AS assets,
@@ -375,11 +375,11 @@ ORDER BY ticker, date;
 CREATE OR REPLACE VIEW v_fundamental_history AS
 SELECT
     ticker,
-    period_date AS fiscal_date,
+    fiscal_date,
     report_type,
     freq,
     metric,
     CAST(value AS DOUBLE) AS value
 FROM silver_fundamentals
-WHERE period_date IS NOT NULL
-ORDER BY ticker, period_date, metric;
+WHERE fiscal_date IS NOT NULL
+ORDER BY ticker, fiscal_date, metric;

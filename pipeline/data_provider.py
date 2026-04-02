@@ -7,6 +7,7 @@ All data access must go through this class.
 Design: docs/superpowers/specs/2026-03-20-spx-data-pipeline-design.md
 """
 
+import glob
 import os
 import re
 from pathlib import Path

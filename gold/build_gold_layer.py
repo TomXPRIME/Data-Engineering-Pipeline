@@ -1,6 +1,6 @@
 """
 Phase 5 — Standalone Gold Layer Builder
-Loads Silver Parquet → DuckDB tables → Creates Gold views.
+Loads Silver Parquet → DuckDB tables → Creates Gold star schema.
 
 This script ONLY handles the Gold phase. For the full pipeline
 (simulator → ingestion → ELT → gold), use run_pipeline.py instead.
@@ -8,8 +8,8 @@ This script ONLY handles the Gold phase. For the full pipeline
 Usage:
   python build_gold_layer.py
   python build_gold_layer.py --db-path /custom/path/to/spx_analytics.duckdb
-  python build_gold_layer.py --verify-only  (just check if views exist and have data)
-  python build_gold_layer.py --sql-file /custom/path/to/create_gold_views.sql
+  python build_gold_layer.py --verify-only  (just check if tables exist and have data)
+  python build_gold_layer.py --sql-file /custom/path/to/create_star_schema.sql
 """
 
 import argparse
@@ -67,13 +67,10 @@ else:
 SCRIPT_DIR = Path(__file__).resolve().parent          # gold/
 PROJECT_ROOT = SCRIPT_DIR.parent                      # repo root
 DEFAULT_DB_PATH = PROJECT_ROOT / "duckdb" / "spx_analytics.duckdb"
-DEFAULT_GOLD_SQL = SCRIPT_DIR / "sql" / "create_gold_views.sql"
+DEFAULT_STAR_SQL = SCRIPT_DIR / "sql" / "create_star_schema.sql"
 
-# Silver layer tables to refresh (dropped before re-creation)
-SILVER_TABLES = ("silver_price", "silver_fundamentals", "silver_sentiment")
-
-# Gold views we expect after SQL execution
-GOLD_VIEWS = (
+# Legacy gold views (kept for backward compat with --sql-file pointing to old SQL)
+LEGACY_GOLD_VIEWS = (
     "v_market_daily_summary",
     "v_ticker_profile",
     "v_sentiment_price_view",
@@ -83,6 +80,15 @@ GOLD_VIEWS = (
     "v_sentiment_binned_returns",
     "v_ar1_time_series",
     "v_fundamental_history",
+)
+
+# Star schema tables produced by create_star_schema.sql
+STAR_TABLES = (
+    "dim_ticker",
+    "dim_date",
+    "fact_daily_price",
+    "fact_quarterly_fundamentals",
+    "fact_earnings_transcript",
 )
 
 # ---------------------------------------------------------------------------
@@ -103,10 +109,10 @@ logger = logging.getLogger("build_gold_layer")
 def _print_summary_table(rows: list[tuple[str, str, str]]):
     """Print a Unicode box-drawing summary table.
 
-    Each row is (view_name, row_count_str, status_str).
+    Each row is (name, row_count_str, status_str).
     """
     # Column widths (minimum)
-    col_w = [24, 10, 21]
+    col_w = [30, 12, 21]
     # Adjust to actual content
     for name, cnt, status in rows:
         col_w[0] = max(col_w[0], len(name) + 2)
@@ -118,7 +124,7 @@ def _print_summary_table(rows: list[tuple[str, str, str]]):
         parts = [fill * w for w in col_w]
         return left + mid.join(parts) + right
 
-    header_names = ("View", "Rows", "Status")
+    header_names = ("Table / View", "Rows", "Status")
     # Top border
     print(_row_line(_BOX_TL, _BOX_TM, _BOX_TR))
     # Header
@@ -183,16 +189,6 @@ def _connect_duckdb(db_path: Path):
     return duckdb.connect(str(db_path))
 
 
-def _drop_silver_tables(con) -> None:
-    """Drop existing silver_* tables so they are refreshed from Parquet."""
-    for table in SILVER_TABLES:
-        try:
-            con.execute(f"DROP TABLE IF EXISTS {table}")
-            logger.info(f"  Dropped table (if existed): {table}")
-        except Exception as exc:
-            logger.warning(f"  Could not drop {table}: {exc}")
-
-
 def _execute_gold_sql(con, sql_path: Path) -> dict[str, str]:
     """Execute the Gold SQL file statement-by-statement.
 
@@ -228,34 +224,34 @@ def _execute_gold_sql(con, sql_path: Path) -> dict[str, str]:
     return results
 
 
-def _verify_views(con) -> list[tuple[str, int | None, str]]:
-    """Query each Gold view for row count.
+def _verify_tables(con, table_names: tuple[str, ...]) -> list[tuple[str, int | None, str]]:
+    """Query each table for row count.
 
-    Returns list of (view_name, row_count_or_None, status_string).
+    Returns list of (table_name, row_count_or_None, status_string).
     """
-    view_results = []
-    for vname in GOLD_VIEWS:
+    results = []
+    for tname in table_names:
         try:
-            row = con.execute(f"SELECT COUNT(*) FROM {vname}").fetchone()
+            row = con.execute(f"SELECT COUNT(*) FROM {tname}").fetchone()
             count = row[0] if row else 0
             status = f"{_CHECK} OK" if count > 0 else f"{_WARN} EMPTY"
-            view_results.append((vname, count, status))
-            logger.info(f"  {vname}: {count:,} rows")
+            results.append((tname, count, status))
+            logger.info(f"  {tname}: {count:,} rows")
         except Exception as exc:
             err_short = str(exc).splitlines()[0][:60]
-            view_results.append((vname, None, f"{_CROSS} {err_short}"))
-            logger.error(f"  {vname}: FAILED — {err_short}")
-    return view_results
+            results.append((tname, None, f"{_CROSS} {err_short}"))
+            logger.error(f"  {tname}: FAILED — {err_short}")
+    return results
 
 
-def _print_sample_data(con, view_results: list[tuple[str, int | None, str]]):
-    """Print a few sample rows from each successfully queried view."""
-    for vname, count, status in view_results:
+def _print_sample_data(con, table_results: list[tuple[str, int | None, str]]):
+    """Print a few sample rows from each successfully queried table."""
+    for tname, count, status in table_results:
         if count is None or count == 0:
             continue
         try:
-            sample = con.execute(f"SELECT * FROM {vname} LIMIT 3").fetchdf()
-            logger.info(f"\n  Sample from {vname}:")
+            sample = con.execute(f"SELECT * FROM {tname} LIMIT 3").fetchdf()
+            logger.info(f"\n  Sample from {tname}:")
             for line in sample.to_string(index=False).splitlines():
                 logger.info(f"    {line}")
         except Exception:
@@ -267,7 +263,7 @@ def _print_sample_data(con, view_results: list[tuple[str, int | None, str]]):
 # ===========================================================================
 
 def build_gold(db_path: Path, sql_path: Path) -> bool:
-    """Full Gold build: drop silver tables → execute SQL → verify views."""
+    """Full Gold build: execute star schema SQL → verify tables."""
     t0 = time.perf_counter()
 
     # 1. Check Silver Parquet availability
@@ -301,11 +297,7 @@ def build_gold(db_path: Path, sql_path: Path) -> bool:
         # 4. Connect to DuckDB
         con = _connect_duckdb(db_path)
 
-        # 5. Drop existing silver tables (force refresh)
-        logger.info("Dropping existing Silver tables for refresh...")
-        _drop_silver_tables(con)
-
-        # 6. Execute Gold SQL
+        # 5. Execute Gold SQL (creates staging tables + star tables + drops staging)
         logger.info(f"Executing Gold SQL ({sql_path.name})...")
         exec_results = _execute_gold_sql(con, sql_path)
 
@@ -316,12 +308,12 @@ def build_gold(db_path: Path, sql_path: Path) -> bool:
                 "continuing with verification..."
             )
 
-        # 7. Verify Gold views
-        logger.info("Verifying Gold views...")
-        view_results = _verify_views(con)
+        # 6. Verify star schema tables
+        logger.info("Verifying star schema tables...")
+        table_results = _verify_tables(con, STAR_TABLES)
 
-        # 8. Sample data
-        _print_sample_data(con, view_results)
+        # 7. Sample data
+        _print_sample_data(con, table_results)
 
         con.close()
 
@@ -330,50 +322,44 @@ def build_gold(db_path: Path, sql_path: Path) -> bool:
 
     elapsed = time.perf_counter() - t0
 
-    # 9. Summary table
+    # 8. Summary table
     print()
     logger.info(f"Gold layer build completed in {elapsed:.1f}s")
     print()
     summary_rows = []
-    for vname, count, status in view_results:
+    for tname, count, status in table_results:
         count_str = f"{count:,}" if count is not None else "—"
-        summary_rows.append((vname, count_str, status))
+        summary_rows.append((tname, count_str, status))
     _print_summary_table(summary_rows)
     print()
 
-    nonexistent = [vname for vname, count, _ in view_results if count is None]
-    empty = [vname for vname, count, _ in view_results if count == 0]
-    failures = nonexistent  # only fail on views that don't exist
-    return len(failures) == 0
+    nonexistent = [tname for tname, count, _ in table_results if count is None]
+    return len(nonexistent) == 0
 
 
 def verify_only(db_path: Path) -> bool:
-    """Just check if Gold views exist and have data — no rebuild."""
-    logger.info("Verify-only mode: checking existing Gold views...")
+    """Just check if Gold star tables exist and have data — no rebuild."""
+    logger.info("Verify-only mode: checking existing Gold star schema tables...")
 
     if not db_path.exists():
         logger.error(f"DuckDB file not found: {db_path}")
         return False
 
-    # CWD not needed for pure SELECT queries, but set it just in case
-    # views reference relative paths (they don't — they query tables).
     con = _connect_duckdb(db_path)
-    view_results = _verify_views(con)
-    _print_sample_data(con, view_results)
+    table_results = _verify_tables(con, STAR_TABLES)
+    _print_sample_data(con, table_results)
     con.close()
 
     print()
     summary_rows = []
-    for vname, count, status in view_results:
+    for tname, count, status in table_results:
         count_str = f"{count:,}" if count is not None else "—"
-        summary_rows.append((vname, count_str, status))
+        summary_rows.append((tname, count_str, status))
     _print_summary_table(summary_rows)
     print()
 
-    nonexistent = [vname for vname, count, _ in view_results if count is None]
-    empty = [vname for vname, count, _ in view_results if count == 0]
-    failures = nonexistent  # only fail on views that don't exist
-    return len(failures) == 0
+    nonexistent = [tname for tname, count, _ in table_results if count is None]
+    return len(nonexistent) == 0
 
 
 # ===========================================================================
@@ -382,14 +368,14 @@ def verify_only(db_path: Path) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Phase 5 — Standalone Gold Layer Builder",
+        description="Phase 5 — Standalone Gold Layer Builder (Star Schema)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python build_gold_layer.py                      # build with defaults
-  python build_gold_layer.py --verify-only        # just check existing views
+  python build_gold_layer.py                      # build star schema with defaults
+  python build_gold_layer.py --verify-only        # just check existing tables
   python build_gold_layer.py --db-path D:/my.duckdb
-  python build_gold_layer.py --sql-file custom_gold.sql
+  python build_gold_layer.py --sql-file custom_star_schema.sql
         """,
     )
     parser.add_argument(
@@ -402,22 +388,22 @@ Examples:
         "--sql-file",
         type=str,
         default=None,
-        help=f"Path to Gold SQL file (default: {DEFAULT_GOLD_SQL})",
+        help=f"Path to Gold SQL file (default: {DEFAULT_STAR_SQL})",
     )
     parser.add_argument(
         "--verify-only",
         action="store_true",
-        help="Only verify existing Gold views — do not rebuild",
+        help="Only verify existing Gold tables — do not rebuild",
     )
     args = parser.parse_args()
 
     db_path = Path(args.db_path) if args.db_path else DEFAULT_DB_PATH
-    sql_path = Path(args.sql_file) if args.sql_file else DEFAULT_GOLD_SQL
+    sql_path = Path(args.sql_file) if args.sql_file else DEFAULT_STAR_SQL
 
     # Banner
     sep = "=" * 60
     logger.info(sep)
-    logger.info("  Phase 5 — Standalone Gold Layer Builder")
+    logger.info("  Phase 5 — Standalone Gold Layer Builder (Star Schema)")
     logger.info(sep)
     logger.info(f"  DuckDB:      {db_path}")
     logger.info(f"  Gold SQL:    {sql_path}")
@@ -433,10 +419,10 @@ Examples:
         ok = build_gold(db_path, sql_path)
 
     if ok:
-        logger.info(f"All Gold views are present. {_CHECK}")
+        logger.info(f"All Gold star schema tables are present. {_CHECK}")
     else:
         logger.warning(
-            "Some Gold views do not exist. "
+            "Some Gold tables do not exist. "
             "Check logs above for details."
         )
 

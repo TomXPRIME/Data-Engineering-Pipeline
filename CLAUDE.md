@@ -19,24 +19,24 @@ NUS MQF (Master of Quantitative Finance) course project — a production-like SP
 │   ├── data_provider.py               # Simulated financial API
 │   ├── ingestion_engine.py            # Bronze layer (watchdog-based)
 │   ├── elt_pipeline.py                # Bronze → Silver transform
-│   └── simulators/                   # Virtual clock simulators
+│   └── simulators/                    # Virtual clock simulators
 ├── output/
 │   ├── landing_zone/                  # Simulator output
 │   │   ├── prices/price_YYYY-MM-DD.csv
-│   │   ├── fundamentals/YYYY-MM-DD/
+│   │   ├── fundamentals/{ticker}/   # ticker-partitioned (2026-04 redesign)
 │   │   └── transcripts/
 │   └── silver/                       # Silver layer Parquet
 ├── duckdb/                            # Gold layer SQL + DB file
 ├── gold/                              # Gold layer
 │   ├── build_gold_layer.py           # Gold layer builder
 │   ├── sql/                          # Gold view DDL
-│   └── tests/test_gold_views.py      # 12-check validation test
+│   └── tests/test_gold_views.py      # 27-check validation test
 ├── docs/
 │   ├── RUN_GUIDE.md                  # Detailed run guide
 │   ├── ARCHIVE/                      # Archived docs
 │   └── superpowers/specs/           # Technical design specs
 ├── test_pipeline.py                   # One-click pipeline test
-├── dashboard.py                      # Streamlit dashboard
+├── dashboard.py                      # Streamlit dashboard (INCOMPLETE - Phase 6 pending)
 ├── STANDARDS.md                      # Development standards
 └── README.md                         # Project overview
 ```
@@ -46,7 +46,7 @@ NUS MQF (Master of Quantitative Finance) course project — a production-like SP
 ```
 Existing Dataset (CSV/PDF)
     ↓
-DataProvider API (simulates Yahoo Finance)
+DataProvider API (simulates Yahoo Finance, with cutoff_date filtering)
     ↓
 Bronze Layer (OLTP - watchdog ingestion)
     ↓
@@ -101,11 +101,6 @@ python gold/build_gold_layer.py
 python gold/tests/test_gold_views.py
 ```
 
-**Streamlit Dashboard:**
-```bash
-python -m streamlit run dashboard.py --server.headless true
-```
-
 ## Key Scripts
 
 | Script | Purpose |
@@ -113,7 +108,7 @@ python -m streamlit run dashboard.py --server.headless true
 | `test_pipeline.py` | One-click pipeline test (2024-01, ~5-10 min) |
 | `duckdb/init_bronze.py` | Initialize DuckDB Bronze tables |
 | `gold/build_gold_layer.py` | Build Gold OLAP views from Silver Parquet |
-| `gold/tests/test_gold_views.py` | Verify all 9 Gold views (27 checks) |
+| `gold/tests/test_gold_views.py` | Verify all 10 Gold views (27 checks) |
 
 ## Documentation
 
@@ -131,16 +126,34 @@ Core packages (conda environment `qf5214_project`):
 - `pypdf` for PDF text extraction
 - `textblob` for sentiment analysis
 
-## Gold Views
+## Gold Views (10 total)
 
 | View | Description | Rows (2024 test) |
 |------|-------------|-------------|
 | `v_market_daily_summary` | Daily market aggregates | 251 |
 | `v_ticker_profile` | Latest ticker snapshot | 818 |
-| `v_fundamental_snapshot` | Latest financials per ticker | 2 |
+| `v_fundamental_snapshot` | Latest financials per ticker | 595 |
+| `v_fundamental_history` | Full history with fiscal_date filtering | 735,163 |
 | `v_sentiment_price_view` | Sentiment + price reaction | 1,954 |
 | `v_rolling_volatility` | 20d/60d annualized volatility | 147,003 |
 | `v_momentum_signals` | Multi-period momentum + trend | 112,705 |
 | `v_sector_rotation` | Quarterly sector ranking | 4 |
 | `v_sentiment_binned_returns` | Sentiment bucket vs forward returns | 2 |
 | `v_ar1_time_series` | AR(1) OLS regression | 135,160 |
+
+## Dashboard (Phase 6 — INCOMPLETE)
+
+Dashboard was removed due to `st.hist_chart` bug and scope issues.
+**Bloomberg-style Fundamental History page** (with `cutoff_date` filtering via `v_fundamental_history`)
+needs to be re-implemented as a separate page on top of the restored dashboard.
+
+## Implementation Phases
+
+| Phase | Task | Status |
+|-------|------|--------|
+| 1 | DataProvider API (`cutoff_date` parameter) | ✅ Completed |
+| 2 | Bronze Layer (Ingestion Engine, ticker-partitioned fundamentals) | ✅ Completed |
+| 3 | ELT Pipeline (Bronze → Silver, freq propagation) | ✅ Completed |
+| 4 | Silver Layer (Parquet + Sentiment) | ✅ Completed |
+| 5 | Gold Layer (10 OLAP views including `v_fundamental_history`) | ✅ Completed |
+| 6 | Streamlit Dashboard | ❌ Incomplete |

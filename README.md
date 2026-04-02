@@ -9,15 +9,15 @@ A production-like SPX 500 data pipeline with Medallion architecture (Bronze → 
 ```
 Existing Dataset (CSV/PDF)
     ↓
-DataProvider API (simulates Yahoo Finance)
+DataProvider API (simulates Bloomberg/Yahoo Finance with cutoff_date filtering)
     ↓
-Bronze Layer (OLTP - watchdog ingestion)
+Bronze Layer (OLTP - watchdog ingestion, ticker-partitioned fundamentals)
     ↓
 ELT Pipeline (Bronze → Silver transform)
     ↓
 Silver Layer (clean Parquet + sentiment)
     ↓
-Gold Layer (OLAP views + Streamlit)
+Gold Layer (10 OLAP views — DuckDB)
 ```
 
 ## Data Scale
@@ -31,22 +31,22 @@ Gold Layer (OLAP views + Streamlit)
 
 ## Quick Start
 
-### 一键测试（推荐）
+### One-click test (recommended)
 
 ```bash
 python test_pipeline.py
 ```
 
-自动执行：清理 → Simulator → Ingestion → ELT → Gold Build → 验证
-测试范围：2024-01-02 ~ 2024-01-31（约20个交易日），预计 5-10 分钟
+Auto: cleanup → Simulator → Ingestion → ELT → Gold Build → verify
+Test range: 2024-01 (~20 trading days), ~5-10 min
 
-### 完整运行（20年数据）
+### Full run (20-year data)
 
 ```bash
-# 1. 初始化 Bronze 表
+# 1. Initialize Bronze tables
 python duckdb/init_bronze.py
 
-# 2. Simulator（20年历史数据，约20-90分钟）
+# 2. Simulator (20-year history, ~20-90 min)
 python -m pipeline.simulators.comprehensive_simulator --mode backfill --start 2004-01-02 --end 2024-12-30
 
 # 3. Ingestion Engine
@@ -58,80 +58,89 @@ python -m pipeline.elt_pipeline
 # 5. Gold Layer
 python gold/build_gold_layer.py
 
-# 6. 验证
+# 6. Verify
 python gold/tests/test_gold_views.py
 ```
-
-### Streamlit Dashboard
-
-```bash
-python -m streamlit run dashboard.py --server.headless true
-```
-
-访问 http://localhost:8501
 
 ## Implementation Phases
 
 | Phase | Task | Status |
 |-------|------|--------|
-| 1 | DataProvider API | ✅ Completed |
-| 2 | Bronze Layer (Ingestion Engine) | ✅ Completed |
-| 3 | ELT Pipeline (Transform Jobs) | ✅ Completed |
+| 1 | DataProvider API (`cutoff_date` Bloomberg-style filtering) | ✅ Completed |
+| 2 | Bronze Layer (ticker-partitioned landing zone, `freq` column) | ✅ Completed |
+| 3 | ELT Pipeline (Bronze → Silver, `freq` propagation) | ✅ Completed |
 | 4 | Silver Layer (Parquet + Sentiment) | ✅ Completed |
-| 5 | Gold Layer (OLAP Views) | ✅ Completed |
-| 6 | Streamlit Dashboard | ✅ Completed |
+| 5 | Gold Layer (10 OLAP views including `v_fundamental_history`) | ✅ Completed |
+| 6 | Streamlit Dashboard | ❌ Incomplete |
 
 ## Project Structure
 
 ```
 5214_Project_SPX_Index_Raw_Data/
-├── data/                              # 原始数据（只读）
+├── data/                              # Raw data (read-only)
 │   ├── price/spx_20yr_ohlcv_data.csv
 │   ├── fundamental/SPX_Fundamental_History/
 │   ├── transcript/SPX_20yr_PDF_Library_10GB/
 │   └── reference/tickers.csv
-├── pipeline/                          # Pipeline 源代码
-│   ├── data_provider.py              # 模拟金融 API
-│   ├── ingestion_engine.py            # Bronze 层（watchdog）
-│   ├── elt_pipeline.py                # Bronze → Silver 转换
-│   └── simulators/                    # 虚拟时钟模拟器
+├── pipeline/                          # Pipeline source code
+│   ├── data_provider.py              # Simulated financial API
+│   ├── ingestion_engine.py            # Bronze layer
+│   ├── elt_pipeline.py                # Bronze → Silver transform
+│   └── simulators/                    # Virtual clock simulators
 ├── output/
-│   ├── landing_zone/                 # Simulator 输出
+│   ├── landing_zone/                 # Simulator output
 │   │   ├── prices/price_YYYY-MM-DD.csv
-│   │   ├── fundamentals/YYYY-MM-DD/
+│   │   ├── fundamentals/{ticker}/   # ticker-partitioned (2026-04 redesign)
 │   │   └── transcripts/
-│   └── silver/                       # Silver 层 Parquet
-├── duckdb/                            # Gold 层 SQL + DuckDB 文件
-├── gold/                              # Gold 层
-│   ├── build_gold_layer.py           # Gold 层构建脚本
-│   ├── sql/                          # Gold 视图 DDL
-│   └── tests/test_gold_views.py      # Gold 视图测试
-├── docs/                              # 文档
-│   ├── RUN_GUIDE.md                  # 详细运行指南
-│   └── ARCHIVE/                      # 已归档文档
-├── test_pipeline.py                   # 一键测试脚本
-├── dashboard.py                      # Streamlit Dashboard
-├── STANDARDS.md                      # 开发规范
-└── README.md                         # 本文件
+│   └── silver/                       # Silver layer Parquet
+├── duckdb/                            # Gold layer SQL + DuckDB file
+├── gold/                              # Gold layer
+│   ├── build_gold_layer.py           # Gold layer builder
+│   ├── sql/                          # Gold view DDL
+│   └── tests/test_gold_views.py      # 27-check validation test
+├── docs/                              # Documentation
+│   ├── RUN_GUIDE.md                  # Detailed run guide
+│   └── superpowers/specs/           # Technical design specs
+├── test_pipeline.py                   # One-click pipeline test
+├── dashboard.py                      # Streamlit Dashboard (INCOMPLETE)
+├── STANDARDS.md                      # Development standards
+└── README.md                         # This file
 ```
 
 ## Technology Stack
 
 | Component | Technology |
 |-----------|------------|
-| Data Access | Python class (DataProvider) |
+| Data Access | Python class (DataProvider with `cutoff_date`) |
 | Ingestion | pandas + DuckDB + watchdog |
 | Database | DuckDB (OLAP optimized) |
 | ELT | DuckDB SQL + Python |
 | Sentiment | TextBlob |
-| Monitoring | Streamlit |
+| Monitoring | Streamlit (pending re-implementation) |
 | Environment | conda (`qf5214_project`) |
 
 ## Documentation
 
 | Document | Purpose |
 |----------|---------|
-| `docs/RUN_GUIDE.md` | 详细运行指南（完整流水线步骤、数据规模估算） |
-| `docs/superpowers/specs/2026-03-20-spx-data-pipeline-design.md` | 技术设计规范（架构、API、schema） |
-| `STANDARDS.md` | 开发规范（代码风格、命名、测试、日志） |
-| `CLAUDE.md` | Claude Code 提示词配置 |
+| `docs/RUN_GUIDE.md` | Detailed run guide (Chinese) |
+| `docs/RUN_GUIDE_en.md` | Detailed run guide (English) |
+| `docs/superpowers/specs/2026-03-20-spx-data-pipeline-design.md` | Technical design (source of truth) |
+| `docs/superpowers/specs/2026-04-02-fundamental-api-redesign-design.md` | Fundamental API redesign spec |
+| `STANDARDS.md` | Development standards |
+| `CLAUDE.md` | Claude Code instructions |
+
+## Gold Views (10 total)
+
+| View | Description |
+|------|-------------|
+| `v_market_daily_summary` | Daily market aggregates |
+| `v_ticker_profile` | Latest ticker snapshot |
+| `v_fundamental_snapshot` | Latest financials per ticker |
+| `v_fundamental_history` | Full history with fiscal_date filtering (Bloomberg-style) |
+| `v_sentiment_price_view` | Sentiment + price reaction |
+| `v_rolling_volatility` | 20d/60d annualized volatility |
+| `v_momentum_signals` | Multi-period momentum + trend |
+| `v_sector_rotation` | Quarterly sector ranking |
+| `v_sentiment_binned_returns` | Sentiment bucket vs forward returns |
+| `v_ar1_time_series` | AR(1) OLS regression |

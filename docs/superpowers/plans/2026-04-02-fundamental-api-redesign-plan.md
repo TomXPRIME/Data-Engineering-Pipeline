@@ -1,5 +1,7 @@
 # Fundamental API Redesign — Implementation Plan
 
+> **Status: ✅ COMPLETED (2026-04-02)** — Pipeline layer implemented; Dashboard pending
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Redesign fundamental data pipeline to simulate Bloomberg/Wind/Yahoo Finance API behavior with `cutoff_date` filtering, ticker-partitioned landing zone, and Bloomberg-style history view in dashboard.

@@ -1,9 +1,9 @@
 # SPX 500 Data Pipeline - Complete Run Guide
 
 > This document describes how to run a complete end-to-end test of the entire project **without modifying any code**.
-> Environment: `qf5214_project` (Conda), Python 3.13, using `C:/miniconda3/envs/qf5214_project/python.exe`
+> Environment: `qf5214_project` (Conda), Python 3.10, using `C:/miniconda3/envs/qf5214_project/python.exe`
 >
-> **Update Status:** All pipeline schema mismatches have been fixed; full pipeline test passed on 2026-04-01.
+> **Update Status:** Pipeline-level fundamental API redesign completed (2026-04-02). Dashboard (Phase 6) pending re-implementation.
 
 ---
 
@@ -22,17 +22,8 @@
 
 ### Step 0: Environment Setup
 
-Verify Conda environment `qf5214_project` has all dependencies:
-
 ```bash
-# Use full path to ensure correct conda environment loads
 "C:/miniconda3/envs/qf5214_project/python.exe" -c "import pandas; import duckdb; import watchdog; import textblob; from pypdf import PdfReader; print('All dependencies OK')"
-```
-
-If dependencies are missing, install them:
-```bash
-pip install -r requirements.txt
-pip install -r gold/requirements.txt
 ```
 
 ---
@@ -53,8 +44,6 @@ Bronze tables created: ['ingestion_audit', 'raw_fundamental_index', 'raw_price_s
 
 ### Step 2: Run Simulator (Generate Landing Zone Data)
 
-Use `-m` mode (avoids relative import errors):
-
 ```bash
 cd <repo_root>
 "C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.simulators.comprehensive_simulator --mode backfill --start 2004-01-02 --end 2024-12-30
@@ -62,18 +51,15 @@ cd <repo_root>
 
 **Output location:**
 - `output/landing_zone/prices/price_YYYY-MM-DD.csv` (5,284 files x 818 tickers)
-- `output/landing_zone/fundamentals/YYYY-MM-DD/*.csv` (5,726 files)
+- `output/landing_zone/fundamentals/{ticker}/` (ticker-partitioned, 8 files per ticker)
 - `output/landing_zone/transcripts/*.pdf` (32,036 PDFs)
+
+> **Note (2026-04-02 redesign):** Landing zone fundamentals structure changed from `fundamentals/YYYY-MM-DD/` to `fundamentals/{ticker}/`.
+> `freq` column added to `raw_fundamental_index` Bronze table.
 
 **Estimated time:** 20-90 minutes (PDF file copying is the main time consumer)
 
-**Progress check:**
-```bash
-ls output/landing_zone/prices/ | wc -l   # Number of price files generated
-ls output/landing_zone/transcripts/ | wc -l  # Number of transcripts generated
-```
-
-**Resume from interruption:** Simulator uses `output/.watermark` file to record the last processed date. Re-running after interruption will automatically continue from the checkpoint.
+**Resume from interruption:** Simulator uses `output/.watermark` file to record the last processed date.
 
 ---
 
@@ -86,7 +72,7 @@ cd <repo_root>
 
 **Expected results:**
 - Price: ~4.32M rows ingested into `raw_price_stream`
-- Fundamentals: 5,726 file indexes ingested into `raw_fundamental_index`
+- Fundamentals: 5,726 file indexes ingested into `raw_fundamental_index` (with `freq` column)
 - Transcripts: 32,036 PDF indexes ingested into `raw_transcript_index`
 
 **Verify Bronze layer data:**
@@ -104,7 +90,7 @@ con.close()
 Expected output (2024 test data):
 ```
 raw_price_stream: 199592 rows
-raw_fundamental_index: 7 rows
+raw_fundamental_index: 2860 rows
 raw_transcript_index: 1950 rows
 ```
 
@@ -114,25 +100,14 @@ raw_transcript_index: 1950 rows
 
 ```bash
 cd <repo_root>
-
-# 4a: Transform Price (all data)
-"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource price
-
-# 4b: Transform Fundamentals
-"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource fundamentals
-
-# 4c: Transform Transcripts (extract PDF text)
-"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource transcripts
-
-# 4d: Compute Sentiment (based on extracted text)
-"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource sentiment
+"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline
 ```
 
 **Estimated time:**
 - Price: 1-3 minutes
 - Fundamentals: <1 minute
-- Transcripts: 5-15 minutes (PDF text extraction, depends on file count)
-- Sentiment: 5-10 minutes (TextBlob sentiment analysis)
+- Transcripts: 5-15 minutes
+- Sentiment: 5-10 minutes
 
 **Verify Silver layer data:**
 ```bash
@@ -145,34 +120,27 @@ df = con.execute('''
     SELECT COUNT(*) as total_rows,
            COUNT(DISTINCT ticker) as tickers,
            COUNT(DISTINCT date) as trading_days
-    FROM read_parquet('output/silver/price/**/*.parquet', hive_partitioning=true)
+    FROM read_parquet(\"output/silver/price/**/*.parquet\", hive_partitioning=true)
 ''').fetchdf()
 print('Silver Price:', df.to_string(index=False))
 
 # Fundamentals
 df2 = con.execute('''
     SELECT ticker, COUNT(*) as rows
-    FROM read_parquet('output/silver/fundamentals/*/data.parquet', hive_partitioning=true)
+    FROM read_parquet(\"output/silver/fundamentals/**/*.parquet\", hive_partitioning=true)
     GROUP BY ticker
 ''').fetchdf()
-print('\nSilver Fundamentals (by ticker):', df2.to_string(index=False))
+print('Silver Fundamentals:', df2.head())
 
 # Sentiment
 df3 = con.execute('''
     SELECT COUNT(*) as total, COUNT(sentiment_polarity) as with_score
-    FROM read_parquet('output/silver/transcript_sentiment/**/*.parquet', hive_partitioning=true)
+    FROM read_parquet(\"output/silver/transcript_sentiment/**/*.parquet\", hive_partitioning=true)
 ''').fetchdf()
-print('\nSilver Sentiment:', df3.to_string(index=False))
+print('Silver Sentiment:', df3.to_string(index=False))
 
 con.close()
 "
-```
-
-Expected output (2024 test):
-```
-Silver Price: total_rows=199592, tickers=818, trading_days=244
-Silver Fundamentals: BIGGQ=658 rows, SNI=0 rows
-Silver Sentiment: total=1950, with_score=1950
 ```
 
 ---
@@ -184,7 +152,7 @@ cd <repo_root>
 "C:/miniconda3/envs/qf5214_project/python.exe" gold/build_gold_layer.py
 ```
 
-**Expected result:** All 9 Gold views created successfully
+**Expected result:** 10 Gold views created successfully
 
 **View Gold view results:**
 ```bash
@@ -192,7 +160,12 @@ cd <repo_root>
 import duckdb
 con = duckdb.connect('duckdb/spx_analytics.duckdb', read_only=True)
 
-views = ['v_market_daily_summary', 'v_ticker_profile', 'v_fundamental_snapshot', 'v_sentiment_price_view', 'v_rolling_volatility', 'v_momentum_signals', 'v_sector_rotation', 'v_sentiment_binned_returns', 'v_ar1_time_series']
+views = [
+    'v_market_daily_summary', 'v_ticker_profile', 'v_fundamental_snapshot',
+    'v_fundamental_history', 'v_sentiment_price_view', 'v_rolling_volatility',
+    'v_momentum_signals', 'v_sector_rotation', 'v_sentiment_binned_returns',
+    'v_ar1_time_series'
+]
 for v in views:
     count = con.execute(f'SELECT COUNT(*) FROM {v}').fetchone()[0]
     print(f'{v}: {count:,} rows')
@@ -204,7 +177,8 @@ Expected output (2024 test):
 ```
 v_market_daily_summary: 251 rows
 v_ticker_profile: 818 rows
-v_fundamental_snapshot: 2 rows
+v_fundamental_snapshot: 595 rows
+v_fundamental_history: 735,163 rows
 v_sentiment_price_view: 1,954 rows
 v_rolling_volatility: 147,003 rows
 v_momentum_signals: 112,705 rows
@@ -234,7 +208,7 @@ Expected output:
   [PASS] All expected columns present
 --- v_fundamental_snapshot ---
   [PASS] View exists
-  [PASS] Has 2 rows
+  [PASS] Has 595 rows
   [PASS] All expected columns present
 --- v_sentiment_price_view ---
   [PASS] View exists
@@ -266,84 +240,88 @@ Results: 27 passed, 0 failed
 
 ---
 
-## 3. Streamlit Dashboard
+## 3. Dashboard (Phase 6 — INCOMPLETE)
 
-Start the Dashboard:
+Dashboard was removed from the repository (`st.hist_chart` bug + scope issues).
 
+**Pending:** Bloomberg-style `Fundamental History` page using `v_fundamental_history` view with `cutoff_date` filtering.
+
+Restore when ready:
 ```bash
 "C:/miniconda3/envs/qf5214_project/python.exe" -m streamlit run dashboard.py --server.headless true
 ```
 
-Access: **http://localhost:8501**
+---
 
-### Page Functionality
+## 4. Data Flow Summary (Pipeline Complete)
 
-| Page | Data Source | Description |
-|------|-------------|-------------|
-| **Overview** | All views | Pipeline overview (4 metric cards) + market trend chart + avg daily return chart |
-| **Market Daily Summary** | `v_market_daily_summary` | Daily market summary table (avg_close, avg_return, total_volume) |
-| **Ticker Profile** | `v_ticker_profile` | Latest snapshot per ticker (company_name, sector, latest_close) + Sector distribution bar chart |
-| **Fundamental Snapshot** | `v_fundamental_snapshot` | Latest financial data per ticker (revenue, net_income, assets, liabilities) |
-| **Sentiment Price View** | `v_sentiment_price_view` | Sentiment score + price change scatter plot (sentiment_score vs next_1d_return) |
-
-### Sidebar Controls
-
-- **Ticker (optional):** Dropdown to filter single ticker data
-- **Sentiment row limit:** Sentiment page row limit (default 2000)
+```
+data/ (raw CSV/PDF)
+    ↓ [Simulator - Step 2]
+output/landing_zone/
+    ├── prices/                    5,284 CSVs ✅
+    ├── fundamentals/{ticker}/      ticker-partitioned ✅
+    └── transcripts/               32,036 PDFs ✅
+    ↓ [Ingestion Engine - Step 3]
+duckdb/spx_analytics.duckdb (Bronze)
+    ├── raw_price_stream             4,322,232 rows ✅
+    ├── raw_fundamental_index (with freq)  5,726 rows ✅
+    └── raw_transcript_index        32,036 rows ✅
+    ↓ [ELT Pipeline - Step 4]
+output/silver/
+    ├── price/                      Date-partitioned Parquet ✅
+    ├── fundamentals/               Ticker-partitioned Parquet (with freq) ✅
+    ├── transcript_text/             PDF text extraction ✅
+    └── transcript_sentiment/       Sentiment analysis Parquet ✅
+    ↓ [Gold Layer - Step 5]
+duckdb/spx_analytics.duckdb (Gold Views, 10 total)
+    ├── v_market_daily_summary       ✅
+    ├── v_ticker_profile             ✅
+    ├── v_fundamental_snapshot       ✅
+    ├── v_fundamental_history       ✅ (new)
+    ├── v_sentiment_price_view       ✅
+    ├── v_rolling_volatility         ✅
+    ├── v_momentum_signals           ✅
+    ├── v_sector_rotation            ✅
+    ├── v_sentiment_binned_returns   ✅
+    └── v_ar1_time_series            ✅
+```
 
 ---
 
-## 4. Time Estimates (Full 20-Year Data)
+## 5. Time Estimates (Full 20-Year Data)
 
 | Phase | Estimated Time | Notes |
 |-------|---------------|-------|
-| Step 2 Simulator | 20-90 minutes | 5284 price day files + 5726 fundamental files + 32036 PDF copies |
-| Step 3 Ingestion | 5-15 minutes | 4.32M CSV rows + 5726 index rows + 32036 index rows |
-| Step 4 ELT Price | 1-3 minutes | DuckDB SQL deduplication + Parquet export |
+| Step 2 Simulator | 20-90 minutes | 5284 price files + 5726 fundamental files + 32036 PDFs |
+| Step 3 Ingestion | 5-15 minutes | 4.32M CSV rows + indexes |
+| Step 4 ELT Price | 1-3 minutes | DuckDB deduplication + Parquet export |
 | Step 4 ELT Fundamentals | 1-2 minutes | CSV unpivot + Parquet export |
-| Step 4 ELT Transcripts | 5-15 minutes | PDF text extraction (32036 files) |
+| Step 4 ELT Transcripts | 5-15 minutes | PDF text extraction |
 | Step 4 ELT Sentiment | 5-10 minutes | TextBlob sentiment analysis |
 | Step 5 Gold | 10-30 seconds | Parquet read + view creation |
 | **Total** | **~40 minutes - 2.5 hours** | |
 
 ---
 
-## 5. DuckDB Direct Query Examples
+## 6. DuckDB Direct Query Examples
 
 ```sql
+-- Bloomberg-style: query historical fundamentals with cutoff_date
+-- Equivalent to DataProvider.get_fundamentals(ticker, freq, cutoff_date)
+SELECT ticker, fiscal_date, report_type, freq, metric, value
+FROM v_fundamental_history
+WHERE ticker = 'AAPL'
+  AND fiscal_date <= '2020-12-31'   -- cutoff_date
+  AND freq = 'quarterly'
+ORDER BY fiscal_date DESC, metric
+LIMIT 50;
+
 -- Market daily summary
-SELECT
-    trade_date,
-    number_of_tickers,
-    avg_close,
-    avg_return,
-    total_volume
+SELECT trade_date, number_of_tickers, avg_close, avg_return, total_volume
 FROM v_market_daily_summary
 WHERE trade_date BETWEEN '2020-01-01' AND '2024-12-31'
 ORDER BY trade_date;
-
--- Annual statistics
-SELECT
-    EXTRACT(YEAR FROM trade_date) AS year,
-    COUNT(*) AS trading_days,
-    ROUND(AVG(avg_return) * 100, 2) AS avg_daily_return_pct,
-    SUM(total_volume) AS total_volume
-FROM v_market_daily_summary
-GROUP BY EXTRACT(YEAR FROM trade_date)
-ORDER BY year;
-
--- Sentiment and price change correlation (v_sentiment_price_view example)
-SELECT
-    ticker,
-    transcript_date,
-    sentiment_score,
-    close_on_event_date,
-    next_1d_return,
-    next_5d_return
-FROM v_sentiment_price_view
-WHERE sentiment_score IS NOT NULL
-ORDER BY transcript_date DESC
-LIMIT 20;
 
 -- Silver layer price data (direct Parquet query)
 SELECT ticker, date, close, volume
@@ -355,44 +333,21 @@ LIMIT 10;
 
 ---
 
-## 6. Data Flow Summary (After Complete Run)
+## 7. Pipeline Update Log (2026-04-02)
 
-```
-data/ (raw CSV/PDF)
-    ↓ [Simulator - Step 2]
-output/landing_zone/
-    ├── prices/         5,284 CSVs ✅
-    ├── fundamentals/   5,726 CSVs ✅
-    └── transcripts/    32,036 PDFs ✅
-    ↓ [Ingestion Engine - Step 3]
-duckdb/spx_analytics.duckdb (Bronze)
-    ├── raw_price_stream       4,322,232 rows ✅
-    ├── raw_fundamental_index  5,726 rows ✅
-    └── raw_transcript_index  32,036 rows ✅
-    ↓ [ELT Pipeline - Step 4]
-output/silver/
-    ├── price/          Date-partitioned Parquet ✅
-    ├── fundamentals/   Ticker-partitioned Parquet ✅
-    ├── transcript_text/  PDF text extraction ✅
-    └── transcript_sentiment/  Sentiment analysis Parquet ✅
-    ↓ [Gold Layer - Step 5]
-duckdb/spx_analytics.duckdb (Gold Views)
-    ├── v_market_daily_summary       ✅
-    ├── v_ticker_profile             ✅
-    ├── v_fundamental_snapshot       ✅
-    ├── v_sentiment_price_view      ✅
-    ├── v_rolling_volatility        ✅
-    ├── v_momentum_signals          ✅
-    ├── v_sector_rotation           ✅
-    ├── v_sentiment_binned_returns   ✅
-    └── v_ar1_time_series           ✅
-```
+| Change | Description | Status |
+|--------|-------------|--------|
+| `SPXDataProvider.get_fundamentals(cutoff_date)` | Added `cutoff_date` param, Bloomberg-style history filtering | ✅ Done |
+| Landing Zone `fundamentals/{ticker}/` | Changed from `YYYY-MM-DD/` to `ticker/` partition | ✅ Done |
+| Bronze `raw_fundamental_index.freq` | Added `freq` VARCHAR column | ✅ Done |
+| Simulator `_seed_all_fundamentals()` | Replaced batch dump with ticker-partitioned seed | ✅ Done |
+| ELT `freq` column | Silver fundamentals parquet includes `freq` field | ✅ Done |
+| `v_fundamental_history` | New Gold view (735,163 rows, supports fiscal_date <= cutoff) | ✅ Done |
+| Dashboard Bloomberg page | `render_fundamental_history` with cutoff_date selector | ❌ Pending |
 
 ---
 
-## 7. Quick Verification Commands (Small Sample for Testing)
-
-For quick verification of key paths, use 2024 data:
+## 8. Quick Verification Commands (Small Sample)
 
 ```bash
 # 1. Initialize
@@ -404,11 +359,8 @@ For quick verification of key paths, use 2024 data:
 # 3. Ingestion
 "C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.ingestion_engine --mode scan
 
-# 4. ELT (run step by step)
-"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource price
-"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource fundamentals
-"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource transcripts
-"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource sentiment
+# 4. ELT
+"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline
 
 # 5. Gold Build & Test
 "C:/miniconda3/envs/qf5214_project/python.exe" gold/build_gold_layer.py
@@ -417,20 +369,5 @@ For quick verification of key paths, use 2024 data:
 
 ---
 
-## 8. Known Issues Fix History (2026-04-01)
-
-The following issues have been fixed; all pipeline stages now work correctly:
-
-| Issue | Cause | Fix | Status |
-|-------|-------|-----|--------|
-| Fundamentals failed to ingest to Bronze | `ingestion_engine.py` used non-existent columns `period` and `market_date` | Changed to `fiscal_date` (matching spec schema) | ✅ Fixed |
-| Transcripts failed to ingest to Bronze | `ingestion_engine.py` used `file_path`, spec defines `pdf_path` | Changed to `pdf_path`, added missing `text_hash` column | ✅ Fixed |
-| ELT fundamentals transform failed | `elt_pipeline.py` SQL queried `period` column (doesn't exist) and `ingested_at` (should be `received_at`) | Changed to `fiscal_date` and `received_at` | ✅ Fixed |
-| ELT transcripts transform failed | `elt_pipeline.py` SQL queried `file_path` (should be `pdf_path`) and `ingested_at` (should be `received_at`) | Changed to `pdf_path` and `received_at` | ✅ Fixed |
-| init_bronze.py / verify_tables.py path errors | Hardcoded Windows paths | Changed to `Path(__file__)` relative paths | ✅ Fixed |
-| build_gold_layer.py GBK console encoding error | Unicode characters cannot display in GBK console | Added ASCII fallback mechanism | ✅ Fixed |
-
----
-
-*Document updated: 2026-04-01*
-*Pipeline version: Phase 1-6 all verified*
+*Document updated: 2026-04-02*
+*Pipeline version: Phase 1-5 complete, Phase 6 Dashboard pending*

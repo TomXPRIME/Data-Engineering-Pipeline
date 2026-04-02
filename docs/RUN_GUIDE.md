@@ -1,9 +1,9 @@
 # SPX 500 数据管道 - 完整运行指南
 
 > 本文档记录在**不修改任何代码**的前提下，如何对整个项目进行完整一次性测试。
-> 环境：`qf5214_project`（Conda），Python 3.13，使用 `C:/miniconda3/envs/qf5214_project/python.exe`
+> 环境：`qf5214_project`（Conda），Python 3.10，使用 `C:/miniconda3/envs/qf5214_project/python.exe`
 >
-> **更新状态：** 所有 pipeline schema 不匹配问题已修复，2026-04-01 全流程测试通过。
+> **更新状态：** Pipeline 层 fundamental API redesign 已完成（2026-04-02），Dashboard（Phase 6）待重新实现。
 >
 > **English version available:** [`RUN_GUIDE_en.md`](./RUN_GUIDE_en.md)
 
@@ -27,14 +27,7 @@
 确认 Conda 环境 `qf5214_project` 已安装所有依赖：
 
 ```bash
-# 使用完整路径运行 Python（确保加载正确的 conda 环境）
 "C:/miniconda3/envs/qf5214_project/python.exe" -c "import pandas; import duckdb; import watchdog; import textblob; from pypdf import PdfReader; print('All dependencies OK')"
-```
-
-如依赖缺失，安装：
-```bash
-pip install -r requirements.txt
-pip install -r gold/requirements.txt
 ```
 
 ---
@@ -64,16 +57,13 @@ cd <repo_root>
 
 **输出位置：**
 - `output/landing_zone/prices/price_YYYY-MM-DD.csv`（5284 个文件 × 818 tickers）
-- `output/landing_zone/fundamentals/YYYY-MM-DD/*.csv`（5726 个文件）
+- `output/landing_zone/fundamentals/{ticker}/`（ticker 分区，每个 ticker 下 4 个 report × 2 freq = 8 个 CSV）
 - `output/landing_zone/transcripts/*.pdf`（32036 个 PDF）
 
-**预估耗时：** 20-90 分钟（主要时间消耗在 PDF 文件复制）
+> **注意（2026-04-02 redesign）：** Landing zone 的 fundamentals 目录结构已从 `fundamentals/YYYY-MM-DD/` 改为 `fundamentals/{ticker}/`。
+> `freq` 列已添加到 `raw_fundamental_index` Bronze 表。
 
-**进度查看：**
-```bash
-ls output/landing_zone/prices/ | wc -l   # 已生成的价格文件数量
-ls output/landing_zone/transcripts/ | wc -l  # 已生成的 transcript 数量
-```
+**预估耗时：** 20-90 分钟（主要时间消耗在 PDF 文件复制）
 
 **断点续传：** Simulator 使用 `output/.watermark` 文件记录最后处理日期，中断后重新运行会自动从断点继续。
 
@@ -88,7 +78,7 @@ cd <repo_root>
 
 **预期结果：**
 - ✅ Price: 约 432 万行成功摄入到 `raw_price_stream`
-- ✅ Fundamentals: 5726 个文件索引摄入到 `raw_fundamental_index`
+- ✅ Fundamentals: 5726 个文件索引摄入到 `raw_fundamental_index`（含 `freq` 字段）
 - ✅ Transcripts: 32036 个 PDF 索引摄入到 `raw_transcript_index`
 
 **验证 Bronze 层数据：**
@@ -106,7 +96,7 @@ con.close()
 预期输出（2024 年测试数据）：
 ```
 raw_price_stream: 199592 行
-raw_fundamental_index: 7 行
+raw_fundamental_index: 2860 行（约 595 tickers × ~4-8 文件）
 raw_transcript_index: 1950 行
 ```
 
@@ -116,18 +106,7 @@ raw_transcript_index: 1950 行
 
 ```bash
 cd <repo_root>
-
-# 4a：转换 Price（全部数据）
-"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource price
-
-# 4b：转换 Fundamentals
-"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource fundamentals
-
-# 4c：转换 Transcripts（提取 PDF 文本）
-"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource transcripts
-
-# 4d：计算 Sentiment（基于提取的文本）
-"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline --resource sentiment
+"C:/miniconda3/envs/qf5214_project/python.exe" -m pipeline.elt_pipeline
 ```
 
 **预估耗时：**
@@ -154,10 +133,10 @@ print('Silver Price:', df.to_string(index=False))
 # Fundamentals
 df2 = con.execute('''
     SELECT ticker, COUNT(*) as rows
-    FROM read_parquet(\"output/silver/fundamentals/*/data.parquet\", hive_partitioning=true)
+    FROM read_parquet(\"output/silver/fundamentals/**/*.parquet\", hive_partitioning=true)
     GROUP BY ticker
 ''').fetchdf()
-print('\nSilver Fundamentals (by ticker):', df2.to_string(index=False))
+print('\nSilver Fundamentals (by ticker):', df2.head().to_string(index=False))
 
 # Sentiment
 df3 = con.execute('''
@@ -170,13 +149,6 @@ con.close()
 "
 ```
 
-预期输出（2024 年测试）：
-```
-Silver Price: total_rows=199592, tickers=818, trading_days=244
-Silver Fundamentals: BIGGQ=658 rows, SNI=0 rows
-Silver Sentiment: total=1950, with_score=1950
-```
-
 ---
 
 ### Step 5：构建 Gold 层
@@ -186,7 +158,7 @@ cd <repo_root>
 "C:/miniconda3/envs/qf5214_project/python.exe" gold/build_gold_layer.py
 ```
 
-**预期结果：** 所有 9 个 Gold 视图创建成功
+**预期结果：** 10 个 Gold 视图创建成功
 
 **查看 Gold 视图结果：**
 ```bash
@@ -196,8 +168,9 @@ con = duckdb.connect('duckdb/spx_analytics.duckdb', read_only=True)
 
 views = [
     'v_market_daily_summary', 'v_ticker_profile', 'v_fundamental_snapshot',
-    'v_sentiment_price_view', 'v_rolling_volatility', 'v_momentum_signals',
-    'v_sector_rotation', 'v_sentiment_binned_returns', 'v_ar1_time_series'
+    'v_fundamental_history', 'v_sentiment_price_view', 'v_rolling_volatility',
+    'v_momentum_signals', 'v_sector_rotation', 'v_sentiment_binned_returns',
+    'v_ar1_time_series'
 ]
 for v in views:
     count = con.execute(f'SELECT COUNT(*) FROM {v}').fetchone()[0]
@@ -210,7 +183,8 @@ con.close()
 ```
 v_market_daily_summary: 251 行
 v_ticker_profile: 818 行
-v_fundamental_snapshot: 2 行
+v_fundamental_snapshot: 595 行
+v_fundamental_history: 735,163 行
 v_sentiment_price_view: 1,954 行
 v_rolling_volatility: 147,003 行
 v_momentum_signals: 112,705 行
@@ -240,7 +214,7 @@ cd <repo_root>
   [PASS] All expected columns present
 --- v_fundamental_snapshot ---
   [PASS] View exists
-  [PASS] Has 2 rows
+  [PASS] Has 595 rows
   [PASS] All expected columns present
 --- v_sentiment_price_view ---
   [PASS] View exists
@@ -272,34 +246,56 @@ Results: 27 passed, 0 failed
 
 ---
 
-## 三、Streamlit Dashboard
+## 三、Dashboard（Phase 6 — 待完成）
 
-启动 Dashboard：
+Dashboard 已从仓库中移除（`st.hist_chart` bug + 范围问题）。
 
+**待实现：** Bloomberg 风格的 `Fundamental History` 页面，使用 `v_fundamental_history` 视图，支持 `cutoff_date` 参数过滤。
+
+实现完成后恢复：
 ```bash
 "C:/miniconda3/envs/qf5214_project/python.exe" -m streamlit run dashboard.py --server.headless true
 ```
 
-访问：**http://localhost:8501**
+---
 
-### 页面功能说明
+## 四、数据流汇总（Pipeline 完成后）
 
-| 页面 | 数据来源 | 说明 |
-|------|----------|------|
-| **Overview** | 全部视图 | Pipeline 概览（4 个指标卡片）+ 市场趋势图 + 日均收益图 |
-| **Market Daily Summary** | `v_market_daily_summary` | 每日市场汇总表（avg_close、avg_return、total_volume） |
-| **Ticker Profile** | `v_ticker_profile` | 各 ticker 最新快照（company_name、sector、latest_close）+ Sector 分布柱状图 |
-| **Fundamental Snapshot** | `v_fundamental_snapshot` | 各 ticker 最新财务数据（revenue、net_income、assets、liabilities） |
-| **Sentiment Price View** | `v_sentiment_price_view` | 情感得分 + 价格变动散点图（sentiment_score vs next_1d_return） |
-
-### 侧边栏控件
-
-- **Ticker (optional)**：下拉选择，筛选单个 ticker 的数据
-- **Sentiment row limit**：Sentiment 页面行数限制（默认 2000）
+```
+data/ (原始 CSV/PDF)
+    ↓ [Simulator - Step 2]
+output/landing_zone/
+    ├── prices/              5,284 个 CSV ✅
+    ├── fundamentals/{ticker}/  ticker 分区 CSV ✅
+    └── transcripts/          32,036 个 PDF ✅
+    ↓ [Ingestion Engine - Step 3]
+duckdb/spx_analytics.duckdb (Bronze)
+    ├── raw_price_stream              4,322,232 行 ✅
+    ├── raw_fundamental_index (含 freq 列)  5,726 行 ✅
+    └── raw_transcript_index          32,036 行 ✅
+    ↓ [ELT Pipeline - Step 4]
+output/silver/
+    ├── price/                    日期分区 Parquet ✅
+    ├── fundamentals/            ticker 分区 Parquet（含 freq） ✅
+    ├── transcript_text/          PDF 文本提取 ✅
+    └── transcript_sentiment/     情感分析 Parquet ✅
+    ↓ [Gold Layer - Step 5]
+duckdb/spx_analytics.duckdb (Gold Views, 10 个)
+    ├── v_market_daily_summary       ✅
+    ├── v_ticker_profile            ✅
+    ├── v_fundamental_snapshot      ✅
+    ├── v_fundamental_history       ✅ (新增)
+    ├── v_sentiment_price_view      ✅
+    ├── v_rolling_volatility        ✅
+    ├── v_momentum_signals         ✅
+    ├── v_sector_rotation          ✅
+    ├── v_sentiment_binned_returns  ✅
+    └── v_ar1_time_series          ✅
+```
 
 ---
 
-## 四、运行时间估算（完整 20 年数据）
+## 五、运行时间估算（完整 20 年数据）
 
 | 阶段 | 预估时间 | 说明 |
 |------|----------|------|
@@ -314,91 +310,7 @@ Results: 27 passed, 0 failed
 
 ---
 
-## 五、DuckDB 直接查询示例
-
-```sql
--- 市场日汇总
-SELECT
-    trade_date,
-    number_of_tickers,
-    avg_close,
-    avg_return,
-    total_volume
-FROM v_market_daily_summary
-WHERE trade_date BETWEEN '2020-01-01' AND '2024-12-31'
-ORDER BY trade_date;
-
--- 按年统计
-SELECT
-    EXTRACT(YEAR FROM trade_date) AS year,
-    COUNT(*) AS trading_days,
-    ROUND(AVG(avg_return) * 100, 2) AS avg_daily_return_pct,
-    SUM(total_volume) AS total_volume
-FROM v_market_daily_summary
-GROUP BY EXTRACT(YEAR FROM trade_date)
-ORDER BY year;
-
--- 情感与价格变动关联（v_sentiment_price_view 示例）
-SELECT
-    ticker,
-    transcript_date,
-    sentiment_score,
-    close_on_event_date,
-    next_1d_return,
-    next_5d_return
-FROM v_sentiment_price_view
-WHERE sentiment_score IS NOT NULL
-ORDER BY transcript_date DESC
-LIMIT 20;
-
--- Silver 层价格数据（直接查 Parquet）
-SELECT ticker, date, close, volume
-FROM read_parquet('output/silver/price/*/*.parquet', hive_partitioning=true)
-WHERE ticker = 'AAPL'
-ORDER BY date
-LIMIT 10;
-```
-
----
-
-## 六、数据流汇总（完整运行后）
-
-```
-data/ (原始 CSV/PDF)
-    ↓ [Simulator - Step 2]
-output/landing_zone/
-    ├── prices/         5,284 个 CSV ✅
-    ├── fundamentals/   5,726 个 CSV ✅
-    └── transcripts/    32,036 个 PDF ✅
-    ↓ [Ingestion Engine - Step 3]
-duckdb/spx_analytics.duckdb (Bronze)
-    ├── raw_price_stream       4,322,232 行 ✅
-    ├── raw_fundamental_index  5,726 行 ✅
-    └── raw_transcript_index  32,036 行 ✅
-    ↓ [ELT Pipeline - Step 4]
-output/silver/
-    ├── price/          按日期分区 Parquet ✅
-    ├── fundamentals/   按 ticker 分区 Parquet ✅
-    ├── transcript_text/  PDF 文本提取 ✅
-    └── transcript_sentiment/ 情感分析 Parquet ✅
-    ↓ [Gold Layer - Step 5]
-duckdb/spx_analytics.duckdb (Gold Views)
-    ├── v_market_daily_summary      ✅
-    ├── v_ticker_profile            ✅
-    ├── v_fundamental_snapshot      ✅
-    ├── v_sentiment_price_view      ✅
-    ├── v_rolling_volatility        ✅
-    ├── v_momentum_signals          ✅
-    ├── v_sector_rotation           ✅
-    ├── v_sentiment_binned_returns  ✅
-    └── v_ar1_time_series          ✅
-```
-
----
-
-## 七、快速验证命令（测试用小样本）
-
-如只需快速验证流程，可用以下命令测试关键路径（使用 2024 年数据）：
+## 六、快速验证命令（测试用小样本）
 
 ```bash
 # 1. 初始化
@@ -423,20 +335,50 @@ duckdb/spx_analytics.duckdb (Gold Views)
 
 ---
 
-## 八、已知问题修复记录（2026-04-01）
+## 七、DuckDB 直接查询示例
 
-以下问题已修复，所有 pipeline 阶段现已正常工作：
+```sql
+-- Bloomberg 风格：查询历史财务数据（cutoff_date 过滤）
+-- 等价于 DataProvider.get_fundamentals(ticker, freq, cutoff_date)
+SELECT ticker, fiscal_date, report_type, freq, metric, value
+FROM v_fundamental_history
+WHERE ticker = 'AAPL'
+  AND fiscal_date <= '2020-12-31'   -- cutoff_date 知识截止
+  AND freq = 'quarterly'
+ORDER BY fiscal_date DESC, metric
+LIMIT 50;
 
-| 问题 | 原因 | 修复 | 状态 |
-|------|------|------|------|
-| Fundamentals 无法摄入 Bronze | `ingestion_engine.py` 使用了不存在的列名 `period` 和 `market_date` | 改为 `fiscal_date`（匹配 spec schema） | ✅ 已修复 |
-| Transcripts 无法摄入 Bronze | `ingestion_engine.py` 使用 `file_path`，spec 定义为 `pdf_path` | 改为 `pdf_path`，并添加缺失的 `text_hash` 列 | ✅ 已修复 |
-| ELT fundamentals 转换失败 | `elt_pipeline.py` SQL 查询 `period` 列（不存在）和 `ingested_at`（应为 `received_at`） | 改为 `fiscal_date` 和 `received_at` | ✅ 已修复 |
-| ELT transcripts 转换失败 | `elt_pipeline.py` SQL 查询 `file_path`（应为 `pdf_path`）和 `ingested_at`（应为 `received_at`） | 改为 `pdf_path` 和 `received_at` | ✅ 已修复 |
-| init_bronze.py / verify_tables.py 路径错误 | 硬编码 Windows 路径 | 改为 `Path(__file__)` 相对路径 | ✅ 已修复 |
-| build_gold_layer.py GBK 控制台编码错误 | Unicode 字符在 GBK 控制台无法输出 | 添加 ASCII 回退机制 | ✅ 已修复 |
+-- 市场日汇总
+SELECT trade_date, number_of_tickers, avg_close, avg_return, total_volume
+FROM v_market_daily_summary
+WHERE trade_date BETWEEN '2020-01-01' AND '2024-12-31'
+ORDER BY trade_date;
+
+-- Silver 层价格数据（直接查 Parquet）
+SELECT ticker, date, close, volume
+FROM read_parquet('output/silver/price/*/*.parquet', hive_partitioning=true)
+WHERE ticker = 'AAPL'
+ORDER BY date
+LIMIT 10;
+```
 
 ---
 
-*文档更新日期：2026-04-01*
-*Pipeline 版本：Phase 1-6 全部通过验证*
+## 八、Pipeline 层更新记录（2026-04-02）
+
+以下为 fundamental API redesign 完成后的 pipeline 变更：
+
+| 变更 | 说明 | 状态 |
+|------|------|------|
+| `SPXDataProvider.get_fundamentals(cutoff_date)` | 新增 `cutoff_date` 参数，支持 Bloomberg 风格历史数据过滤 | ✅ 已完成 |
+| Landing Zone `fundamentals/{ticker}/` | 从 `YYYY-MM-DD/` 分区改为 `ticker/` 分区 | ✅ 已完成 |
+| Bronze `raw_fundamental_index.freq` | 新增 `freq` 列（VARCHAR） | ✅ 已完成 |
+| Simulator `_seed_all_fundamentals()` | 替代 `_emit_all_fundamentals()`，ticker 分区存储 | ✅ 已完成 |
+| ELT `freq` 列 | Silver fundamentals parquet 包含 `freq` 字段 | ✅ 已完成 |
+| `v_fundamental_history` | 新增 Gold 视图（735,163 行，支持 fiscal_date <= cutoff 过滤） | ✅ 已完成 |
+| Dashboard Bloomberg 风格 | `render_fundamental_history` 页面（cutoff_date + ticker 选择） | ❌ 待实现 |
+
+---
+
+*文档更新日期：2026-04-02*
+*Pipeline 版本：Phase 1-5 完成，Phase 6 Dashboard 待实现*

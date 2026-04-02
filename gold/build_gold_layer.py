@@ -80,7 +80,6 @@ LEGACY_GOLD_VIEWS = (
     "v_momentum_signals",
     "v_sector_rotation",
     "v_sentiment_binned_returns",
-    "v_ar1_time_series",
     "v_fundamental_history",
 )
 

@@ -17,7 +17,7 @@ ELT Pipeline (Bronze → Silver transform)
     ↓
 Silver Layer (clean Parquet + sentiment)
     ↓
-Gold Layer (10 OLAP views — DuckDB)
+Gold Layer (Star Schema: 5 tables + 3 materialized + 7 views)
 ```
 
 ## Data Scale
@@ -119,7 +119,7 @@ python gold/tests/test_gold_views.py
 | Database | DuckDB (OLAP optimized) |
 | ELT | DuckDB SQL + Python |
 | Sentiment | TextBlob |
-| Monitoring | Streamlit (pending re-implementation) |
+| Monitoring | Streamlit (6-tab dashboard) |
 | Environment | conda (`qf5214_project`) |
 
 ## Documentation

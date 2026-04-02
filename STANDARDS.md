@@ -328,7 +328,8 @@ con.execute("PRAGMA journal_mode=WAL")    # Concurrent read/write
 | Document | Update Timing |
 |---------|-------------|
 | `CLAUDE.md` | New components, architecture changes |
-| `IMPLEMENTATION_PLAN.md` | Milestone completion, plan adjustments |
+| `README.md` | Project overview, quick start |
+| `docs/RUN_GUIDE.md` | Detailed run guide |
 | `STANDARDS.md` | Standards changes |
 | Code docstrings | Function signature changes |
 
@@ -360,4 +361,4 @@ def get_price(self, ticker: str, date: str) -> pd.DataFrame:
 
 ---
 
-Technical design document: `docs/superpowers/specs/2026-03-20-spx-data-pipeline-design.md`.
+Technical design documents: see `docs/superpowers/specs/` for completed design specs (fundamental API redesign, dashboard UX redesign, medallion star schema).

@@ -92,17 +92,19 @@ Streamlit Dashboard (6 Tab)
 │   │   ├── sector_query.py
 │   │   └── dimension_query.py
 │   └── tests/
-│       ├── test_dim_date_generator.py  # 新增
-│       ├── test_dim_ticker_generator.py # 新增
-│       └── test_gold_views.py           # 旧9视图测试，待更新
+│       ├── test_dim_date_generator.py
+│       ├── test_dim_ticker_generator.py
+│       └── test_gold_views.py           # 45-check validation test
 ├── docs/
 │   ├── RUN_GUIDE.md
 │   ├── RUN_GUIDE_en.md
+│   ├── CONSOLIDATED.md                    # 本文件
 │   ├── ARCHIVE/
 │   └── superpowers/
-│       └── specs/
-│           └── 2026-04-02-medallion-star-schema-design.md  # 当前设计
-├── dashboard.py                        # 待重建: 6 Tab Streamlit
+│       ├── specs/                          # 已完成的设计文档
+│       └── plans/                          # 已完成的执行计划
+├── test_pipeline.py                        # 一键测试脚本
+├── dashboard.py                            # 6 Tab Streamlit 界面 (✅ COMPLETE)
 ├── STANDARDS.md
 └── README.md
 ```
@@ -166,4 +168,4 @@ Streamlit Dashboard (6 Tab)
 ---
 
 *文档更新日期：2026-04-02*
-*当前架构：Medallion + Star Schema 设计阶段（Phase 5 执行中）*
+*当前架构：Medallion + Star Schema 已完成（Phase 1-6 全部完成 ✅）*

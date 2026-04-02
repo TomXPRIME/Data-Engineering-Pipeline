@@ -1,7 +1,10 @@
 # Fundamental Data API Redesign — 2026-04-02
 
+> **STATUS: ✅ COMPLETED (2026-04-02)** — All redesign items implemented and verified.
+> This document is kept for historical reference only.
+
 ## Status
-Draft — awaiting spec review
+Completed — implemented 2026-04-02
 
 ## 1. Problem Statement
 

@@ -53,7 +53,7 @@ class IngestionEngine:
 
     Monitors landing_zone directories and ingests new files into Bronze tables:
     - prices/*.csv → raw_price_stream
-    - fundamentals/YYYY-MM-DD/*.csv → raw_fundamental_index
+    - fundamentals/{ticker}/*.csv → raw_fundamental_index
     - transcripts/*.pdf → raw_transcript_index
     """
 
@@ -150,21 +150,21 @@ class IngestionEngine:
         logger.info(f"Ingested {rows_inserted} price records from {filepath.stem} ({failed_rows} failed)")
         return rows_inserted
 
-    def ingest_fundamental_file(self, filepath: Path, dated_dir: str) -> int:
+    def ingest_fundamental_file(self, filepath: Path, ticker: str) -> int:
         """
         Ingest a fundamental CSV file into raw_fundamental_index.
 
-        File format: TICKER_type_freq.csv (e.g., AAPL_income_quarterly.csv)
-        Path format: fundamentals/YYYY-MM-DD/TICKER_type_freq.csv
+        Path format: fundamentals/{ticker}/{report_type}_{freq}.csv
+        File format: {report_type}_{freq}.csv (e.g., income_quarterly.csv)
         """
         try:
-            filename = filepath.stem  # e.g., "AAPL_income_quarterly"
-            parts = filename.rsplit("_", 2)
-            if len(parts) != 3:
+            filename = filepath.stem  # e.g., "income_quarterly"
+            parts = filename.rsplit("_", 1)
+            if len(parts) != 2:
                 logger.warning(f"Unexpected fundamental filename format: {filename}")
                 return 0
 
-            ticker, report_type, freq = parts
+            report_type, freq = parts
             file_hash = self._compute_file_hash(filepath)
 
             # Extract fiscal date from first row's second column (first date) in the CSV
@@ -174,14 +174,14 @@ class IngestionEngine:
                 if first_line:
                     cols = first_line.split(",")
                     # First column is empty (metric name), second is first date
-                    fiscal_date = cols[1] if len(cols) > 1 else dated_dir
+                    fiscal_date = cols[1] if len(cols) > 1 else ""
                     if fiscal_date and not fiscal_date.startswith("0"):
                         try:
                             datetime.strptime(fiscal_date, "%Y-%m-%d")
                         except ValueError:
-                            fiscal_date = dated_dir  # fallback to directory date
+                            fiscal_date = ""  # no fallback to directory date
                 else:
-                    fiscal_date = dated_dir
+                    fiscal_date = ""
 
             con = self._get_connection()
             con.execute(
@@ -192,13 +192,13 @@ class IngestionEngine:
                 [ticker, report_type, freq, fiscal_date, str(filepath)],
             )
 
-            self._log_audit("fundamental", ticker, dated_dir, file_hash, "SUCCESS")
+            self._log_audit("fundamental", ticker, fiscal_date, file_hash, "SUCCESS")
             logger.info(f"Ingested fundamental index: {filename}")
             return 1
 
         except Exception as e:
             logger.error(f"Failed to ingest fundamental file {filepath}: {e}")
-            self._log_audit("fundamental", filepath.stem, dated_dir, "", "FAILED", str(e))
+            self._log_audit("fundamental", ticker, "", "", "FAILED", str(e))
             return 0
 
     def ingest_transcript_file(self, filepath: Path) -> int:
@@ -256,11 +256,11 @@ class IngestionEngine:
 
         # Ingest fundamental files
         if fundamentals_dir.exists():
-            for dated_dir in fundamentals_dir.iterdir():
-                if dated_dir.is_dir():
-                    for csv_file in dated_dir.glob("*.csv"):
+            for ticker_dir in fundamentals_dir.iterdir():
+                if ticker_dir.is_dir():
+                    for csv_file in ticker_dir.glob("*.csv"):
                         if csv_file.exists():  # Skip if file was deleted during scan
-                            total_ingested += self.ingest_fundamental_file(csv_file, dated_dir.name)
+                            total_ingested += self.ingest_fundamental_file(csv_file, ticker_dir.name)
 
         # Ingest transcript files
         if transcripts_dir.exists():
@@ -337,12 +337,12 @@ class LandingZoneHandler(FileSystemEventHandler):
 
         elif "fundamentals" in filepath.parts:
             if filepath.suffix == ".csv":
-                # Extract dated directory from path
+                # Extract ticker directory from path
                 parts = filepath.parts
                 for i, p in enumerate(parts):
                     if p == "fundamentals" and i + 1 < len(parts):
-                        dated_dir = parts[i + 1]
-                        self.engine.ingest_fundamental_file(filepath, dated_dir)
+                        ticker = parts[i + 1]
+                        self.engine.ingest_fundamental_file(filepath, ticker)
                         break
 
         elif "transcripts" in filepath.parts:

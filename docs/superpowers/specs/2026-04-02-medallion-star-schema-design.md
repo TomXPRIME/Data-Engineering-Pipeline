@@ -133,6 +133,7 @@ LEFT JOIN fact_quarterly_fundamentals f
 | is_current | BOOLEAN | 是否当前版本 |
 
 **SCD Type 2 策略：** sector/industry 变化时，关闭旧行（valid_to = 变化日期-1），插入新行（valid_from = 变化日期）。
+变更触发条件：同一 ticker 的 sector 或 industry 字段值与上一版本不同时，插入新行。
 
 ### 4.2 dim_date (物理化)
 
@@ -163,8 +164,8 @@ LEFT JOIN fact_quarterly_fundamentals f
 | volume | BIGINT | 成交量 |
 | prev_close | DECIMAL(18,6) | 前一交易日收盘价 |
 | daily_return | DECIMAL(18,8) | 日收益率 |
-| next_1d_return | DECIMAL(18,8) | 前向1日收益率 |
-| next_5d_return | DECIMAL(18,8) | 前向5日收益率 |
+| next_1d_return | DECIMAL(18,8) | 前向1日收益率（最后1-2行无数据，Gold Build时置NULL） |
+| next_5d_return | DECIMAL(18,8) | 前向5日收益率（最后5行无数据，Gold Build时置NULL） |
 
 ### 4.4 fact_quarterly_fundamentals
 
@@ -246,7 +247,7 @@ LEFT JOIN fact_quarterly_fundamentals f
 
 | 类 | 职责 | 核心方法 |
 |----|------|---------|
-| `PriceQuery` | 价格/市场/交易日历 | `get_daily_summary()`, `get_ticker_price()`, `get_trading_dates()`, `get_market_overview()` |
+| `PriceQuery` | 价格/市场/交易日历 | `get_daily_summary()`, `get_ticker_price()`, `get_trading_dates()`, `get_market_overview()` （market_overview 在 PriceQuery 内，非独立类） |
 | `FundamentalsQuery` | 基本面 ASOF 查询 | `get_snapshot(ticker)`, `get_history(ticker, cutoff_date)`, `get_quarterly(ticker)` |
 | `SentimentQuery` | 情感分析 | `get_sentiment_price(ticker)`, `get_binned_returns()`, `get_sentiment_series(ticker)` |
 | `RiskQuery` | 风险指标 | `get_rolling_volatility(ticker)`, `get_momentum_signals(ticker)`, `get_ar1(ticker)` |
@@ -372,7 +373,7 @@ DataProvider API
 | `gold/build_gold_layer.py` | 重写 | Star Schema + 物化表构建逻辑 |
 | `gold/sql/create_star_schema.sql` | 新增 | Star Schema DDL |
 | `gold/sql/create_materialized.sql` | 新增 | 物化表 DDL |
-| `gold/sql/create_olap_views.sql` | 新增 | 轻量 OLAP 视图 |
+| `gold/sql/create_olap_views.sql` | 新增 | 轻量 OLAP 视图（原10个视图中的7个保留，3个重度视图转为物化物理表） |
 | `gold/dim_date_generator.py` | 新增 | dim_date 生成器 |
 | `gold/dim_ticker_generator.py` | 新增 | dim_ticker SCD Type 2 生成器 |
 | `gold/query/` | 新增 | Python Query 类目录 |

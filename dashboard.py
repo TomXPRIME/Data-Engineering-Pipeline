@@ -86,6 +86,8 @@ def get_available_tickers():
 
 
 def main():
+    st.title("SPX Analytics Dashboard")
+
     # ── Sidebar: Global Filters ──────────────────────────────────────
     st.sidebar.title("SPX Analytics")
     date_range = st.sidebar.date_input(
@@ -119,16 +121,17 @@ def main():
         try:
             df_summary = PriceQuery.get_daily_summary(start_date, end_date)
             if not df_summary.empty:
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    latest = df_summary.iloc[-1]
-                    st.metric(METRIC_LABELS["Latest Avg Close"], f"${latest['avg_close']:.2f}")
-                with col2:
-                    st.metric(METRIC_LABELS["Trading Days"], f"{len(df_summary):,}")
-                with col3:
-                    if len(df_summary) > 1:
-                        pct_change = ((df_summary.iloc[-1]["avg_close"] / df_summary.iloc[0]["avg_close"]) - 1) * 100
-                        st.metric(METRIC_LABELS["Period Change"], f"{pct_change:.2f}%")
+                with st.container(border=True):
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        latest = df_summary.iloc[-1]
+                        st.metric(METRIC_LABELS["Latest Avg Close"], f"${latest['avg_close']:.2f}")
+                    with col2:
+                        st.metric(METRIC_LABELS["Trading Days"], f"{len(df_summary):,}")
+                    with col3:
+                        if len(df_summary) > 1:
+                            pct_change = ((df_summary.iloc[-1]["avg_close"] / df_summary.iloc[0]["avg_close"]) - 1) * 100
+                            st.metric(METRIC_LABELS["Period Change"], f"{pct_change:.2f}%")
 
                 st.line_chart(df_summary.set_index("trade_date")["avg_close"])
                 st.divider()
@@ -154,14 +157,15 @@ def main():
         try:
             df_price = PriceQuery.get_ticker_price(selected_ticker, start_date, end_date)
             if not df_price.empty:
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric(METRIC_LABELS["Latest Close"], f"${df_price.iloc[-1]['close']:.2f}")
-                with col2:
-                    st.metric(METRIC_LABELS["Volume"], f"{df_price.iloc[-1]['volume']:,.0f}")
-                with col3:
-                    ret = df_price.iloc[-1]["daily_return"]
-                    st.metric(METRIC_LABELS["Daily Return"], f"{ret:.2%}" if pd.notna(ret) else "N/A")
+                with st.container(border=True):
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric(METRIC_LABELS["Latest Close"], f"${df_price.iloc[-1]['close']:.2f}")
+                    with col2:
+                        st.metric(METRIC_LABELS["Volume"], f"{df_price.iloc[-1]['volume']:,.0f}")
+                    with col3:
+                        ret = df_price.iloc[-1]["daily_return"]
+                        st.metric(METRIC_LABELS["Daily Return"], f"{ret:.2%}" if pd.notna(ret) else "N/A")
 
                 st.line_chart(df_price.set_index("date")["close"])
                 st.divider()

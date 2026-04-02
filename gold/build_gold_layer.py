@@ -69,6 +69,7 @@ PROJECT_ROOT = SCRIPT_DIR.parent                      # repo root
 DEFAULT_DB_PATH = PROJECT_ROOT / "duckdb" / "spx_analytics.duckdb"
 DEFAULT_STAR_SQL = SCRIPT_DIR / "sql" / "create_star_schema.sql"
 DEFAULT_MATERIALIZED_SQL = SCRIPT_DIR / "sql" / "create_materialized.sql"
+DEFAULT_OLAP_SQL = SCRIPT_DIR / "sql" / "create_olap_views.sql"
 
 # Legacy gold views (kept for backward compat with --sql-file pointing to old SQL)
 LEGACY_GOLD_VIEWS = (
@@ -97,6 +98,17 @@ MATERIALIZED_TABLES = (
     "fact_rolling_volatility",
     "fact_momentum_signals",
     "fact_ar1_results",
+)
+
+# OLAP views produced by create_olap_views.sql
+OLAP_VIEWS = (
+    "v_market_daily_summary",
+    "v_ticker_profile",
+    "v_fundamental_snapshot",
+    "v_fundamental_history",
+    "v_sentiment_price_view",
+    "v_sentiment_binned_returns",
+    "v_sector_rotation",
 )
 
 # ---------------------------------------------------------------------------
@@ -271,8 +283,8 @@ def _print_sample_data(con, table_results: list[tuple[str, int | None, str]]):
 # Entry points
 # ===========================================================================
 
-def build_gold(db_path: Path, sql_path: Path, materialized_sql_path: Path) -> bool:
-    """Full Gold build: execute star schema SQL → execute materialized SQL → verify tables."""
+def build_gold(db_path: Path, sql_path: Path, materialized_sql_path: Path, olap_sql_path: Path) -> bool:
+    """Full Gold build: execute star schema SQL → execute materialized SQL → execute OLAP views SQL → verify tables."""
     t0 = time.perf_counter()
 
     # 1. Check Silver Parquet availability
@@ -301,6 +313,11 @@ def build_gold(db_path: Path, sql_path: Path, materialized_sql_path: Path) -> bo
         logger.error(f"Materialized SQL file not found: {materialized_sql_path}")
         return False
     logger.info(f"Materialized SQL file: {materialized_sql_path}")
+
+    if not olap_sql_path.exists():
+        logger.error(f"OLAP views SQL file not found: {olap_sql_path}")
+        return False
+    logger.info(f"OLAP views SQL file: {olap_sql_path}")
 
     # 3. Change CWD so relative Parquet paths in SQL resolve correctly
     original_cwd = os.getcwd()
@@ -337,17 +354,35 @@ def build_gold(db_path: Path, sql_path: Path, materialized_sql_path: Path) -> bo
             con.close()
             sys.exit(1)
 
-        # 7. Verify star schema tables
+        # 7. Execute OLAP views SQL (creates 7 lightweight OLAP views)
+        logger.info(f"Executing OLAP views SQL ({olap_sql_path.name})...")
+        olap_results = _execute_gold_sql(con, olap_sql_path)
+
+        olap_failures = [k for k, v in olap_results.items() if v != "OK"]
+        if olap_failures:
+            logger.error(
+                f"{len(olap_failures)} OLAP views SQL statement(s) failed. "
+                "Exiting with error."
+            )
+            con.close()
+            sys.exit(1)
+
+        # 8. Verify star schema tables
         logger.info("Verifying star schema tables...")
         star_table_results = _verify_tables(con, STAR_TABLES)
 
-        # 8. Verify materialized tables
+        # 9. Verify materialized tables
         logger.info("Verifying materialized tables...")
         mat_table_results = _verify_tables(con, MATERIALIZED_TABLES)
 
-        # 9. Sample data
+        # 10. Verify OLAP views
+        logger.info("Verifying OLAP views...")
+        olap_view_results = _verify_tables(con, OLAP_VIEWS)
+
+        # 11. Sample data
         _print_sample_data(con, star_table_results)
         _print_sample_data(con, mat_table_results)
+        _print_sample_data(con, olap_view_results)
 
         con.close()
 
@@ -356,7 +391,7 @@ def build_gold(db_path: Path, sql_path: Path, materialized_sql_path: Path) -> bo
 
     elapsed = time.perf_counter() - t0
 
-    # 10. Summary table (star schema + materialized)
+    # 12. Summary table (star schema + materialized + OLAP views)
     print()
     logger.info(f"Gold layer build completed in {elapsed:.1f}s")
     print()
@@ -367,11 +402,15 @@ def build_gold(db_path: Path, sql_path: Path, materialized_sql_path: Path) -> bo
     for tname, count, status in mat_table_results:
         count_str = f"{count:,}" if count is not None else "—"
         summary_rows.append((tname, count_str, status))
+    for tname, count, status in olap_view_results:
+        count_str = f"{count:,}" if count is not None else "—"
+        summary_rows.append((tname, count_str, status))
     _print_summary_table(summary_rows)
     print()
 
     nonexistent = [tname for tname, count, _ in star_table_results if count is None]
     nonexistent.extend(tname for tname, count, _ in mat_table_results if count is None)
+    nonexistent.extend(tname for tname, count, _ in olap_view_results if count is None)
     return len(nonexistent) == 0
 
 
@@ -438,15 +477,17 @@ Examples:
     db_path = Path(args.db_path) if args.db_path else DEFAULT_DB_PATH
     sql_path = Path(args.sql_file) if args.sql_file else DEFAULT_STAR_SQL
     materialized_sql_path = DEFAULT_MATERIALIZED_SQL
+    olap_sql_path = DEFAULT_OLAP_SQL
 
     # Banner
     sep = "=" * 60
     logger.info(sep)
-    logger.info("  Phase 5 — Gold Layer Builder (Star Schema + Materialized Tables)")
+    logger.info("  Phase 5 — Gold Layer Builder (Star Schema + Materialized Tables + OLAP Views)")
     logger.info(sep)
     logger.info(f"  DuckDB:            {db_path}")
     logger.info(f"  Gold SQL:         {sql_path}")
     logger.info(f"  Materialized SQL: {materialized_sql_path}")
+    logger.info(f"  OLAP views SQL:   {olap_sql_path}")
     logger.info(f"  Project root:     {PROJECT_ROOT}")
     logger.info(f"  Python:           {sys.executable}")
     logger.info(f"  Mode:             {'verify-only' if args.verify_only else 'full build'}")
@@ -456,7 +497,7 @@ Examples:
     if args.verify_only:
         ok = verify_only(db_path)
     else:
-        ok = build_gold(db_path, sql_path, materialized_sql_path)
+        ok = build_gold(db_path, sql_path, materialized_sql_path, olap_sql_path)
 
     if ok:
         logger.info(f"All Gold star schema tables are present. {_CHECK}")

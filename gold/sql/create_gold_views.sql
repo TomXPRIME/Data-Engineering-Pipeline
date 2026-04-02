@@ -10,7 +10,8 @@ SELECT * FROM read_parquet('output/silver/price/**/*.parquet', hive_partitioning
 
 -- Fundamentals
 CREATE TABLE IF NOT EXISTS silver_fundamentals AS
-SELECT * FROM read_parquet('output/silver/fundamentals/**/*.parquet', hive_partitioning=true);
+SELECT ticker, report_type, fiscal_date, metric, value, freq
+FROM read_parquet('output/silver/fundamentals/**/*.parquet', hive_partitioning=true);
 
 -- Sentiment
 CREATE TABLE IF NOT EXISTS silver_sentiment AS
@@ -364,3 +365,21 @@ SELECT
 FROM ar_window
 WHERE n_obs >= 20
 ORDER BY ticker, date;
+
+-- ============================================================
+-- Person F Views: Fundamental History Time-Series
+-- ============================================================
+
+-- v_fundamental_history — full time-series per ticker for Bloomberg-style queries
+-- Usage: SELECT * FROM v_fundamental_history WHERE ticker='AAPL' AND fiscal_date <= '2020-06-30'
+CREATE OR REPLACE VIEW v_fundamental_history AS
+SELECT
+    ticker,
+    period_date AS fiscal_date,
+    report_type,
+    freq,
+    metric,
+    CAST(value AS DOUBLE) AS value
+FROM silver_fundamentals
+WHERE period_date IS NOT NULL
+ORDER BY ticker, period_date, metric;

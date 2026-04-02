@@ -155,7 +155,7 @@ def render_ticker_profile(ticker_profile: pd.DataFrame, selected_ticker: str | N
 
 
 def render_fundamental_history(con, ticker_list: list) -> None:
-    """Bloomberg-style fundamental history with cutoff_date."""
+    """Bloomberg-style fundamental history with cutoff_date (knowledge cutoff)."""
     st.subheader("Fundamental History")
 
     col1, col2, col3 = st.columns(3)
@@ -344,6 +344,17 @@ def volatility_page(con):
     st.line_chart(df[["date", "annualized_vol_20d", "annualized_vol_60d"]].head(200).set_index("date"))
 
 
+def _hist_bar_chart(series: pd.Series, bins: int = 30, title: str = "") -> None:
+    """Render a histogram as a bar chart using pandas cut + value_counts."""
+    counts, edges = pd.cut(series, bins=bins, include_lowest=True, retbins=True)
+    vc = counts.value_counts().sort_index()
+    vc_df = vc.rename("count").reset_index()
+    vc_df.columns = ["bin", "count"]
+    # Format bin labels as ranges
+    vc_df["bin"] = vc_df["bin"].apply(lambda x: f"{x.left:.3f}-{x.right:.3f}")
+    st.bar_chart(vc_df.set_index("bin")["count"])
+
+
 def ar1_page(con):
     """v_ar1_time_series — AR(1) autoregressive model results."""
     st.header("AR(1) Time Series Model")
@@ -374,9 +385,9 @@ def ar1_page(con):
         avg_r2 = df["r_squared_ar1"].mean()
         st.metric("Avg R-squared", f"{avg_r2:.6f}" if avg_r2 else "N/A")
 
+    beta_series = df["beta_ar1"].dropna().tail(1000)
     st.subheader("Beta Distribution (last 1000 rows)")
-    beta_df = df[["beta_ar1"]].dropna().tail(1000)
-    st.hist_chart(beta_df)
+    _hist_bar_chart(beta_series, bins=30)
 
     st.subheader("R-squared vs Beta (scatter)")
     scatter_df = df[["beta_ar1", "r_squared_ar1"]].dropna().tail(2000)
@@ -423,9 +434,9 @@ def momentum_page(con):
     signal_counts = df["trend_signal"].value_counts()
     st.bar_chart(signal_counts)
 
+    momentum_series = df["momentum_5d"].dropna().tail(1000)
     st.subheader("Momentum Distribution (5d)")
-    hist_df = df[["momentum_5d"]].dropna().tail(1000)
-    st.hist_chart(hist_df)
+    _hist_bar_chart(momentum_series, bins=30)
 
     st.subheader("Sample Data")
     st.dataframe(df.head(20), use_container_width=True)

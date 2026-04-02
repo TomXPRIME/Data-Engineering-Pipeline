@@ -8,7 +8,7 @@ Design: docs/superpowers/specs/2026-03-20-spx-data-pipeline-design.md
 """
 
 import os
-import glob
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -163,6 +163,8 @@ class SPXDataProvider:
                 try:
                     df = pd.read_csv(filepath, index_col=0)
                     if cutoff_date is not None:
+                        if not re.match(r'^\d{4}-\d{2}-\d{2}$', cutoff_date):
+                            raise ValueError(f"cutoff_date must be YYYY-MM-DD format, got '{cutoff_date}'")
                         valid_cols = [c for c in df.columns if c <= cutoff_date]
                         df = df[valid_cols]
                     result[report_type] = df

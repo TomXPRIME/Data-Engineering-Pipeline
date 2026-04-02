@@ -297,7 +297,7 @@ class IngestionEngine:
                 if msg_type == "price_file":
                     self.ingest_price_file(filepath)
                 elif msg_type == "fundamental_file":
-                    self.ingest_fundamental_file(filepath, payload_dict.get("date", ""))
+                    self.ingest_fundamental_file(filepath, payload_dict.get("ticker", ""))
                 elif msg_type == "transcript_file":
                     self.ingest_transcript_file(filepath)
                 else:

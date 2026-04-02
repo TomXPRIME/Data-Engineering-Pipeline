@@ -70,8 +70,8 @@ python gold/tests/test_gold_views.py
 | 2 | Bronze Layer (ticker-partitioned landing zone, `freq` column) | ✅ Completed |
 | 3 | ELT Pipeline (Bronze → Silver, `freq` propagation) | ✅ Completed |
 | 4 | Silver Layer (Parquet + Sentiment) | ✅ Completed |
-| 5 | Gold Layer (10 OLAP views including `v_fundamental_history`) | ✅ Completed |
-| 6 | Streamlit Dashboard | ❌ Incomplete |
+| 5 | Gold Layer Star Schema (5 tables + 3 materialized + 7 views) | ✅ Completed |
+| 6 | Streamlit 6-tab Dashboard | ✅ Completed |
 
 ## Project Structure
 
@@ -96,13 +96,16 @@ python gold/tests/test_gold_views.py
 ├── duckdb/                            # Gold layer SQL + DuckDB file
 ├── gold/                              # Gold layer
 │   ├── build_gold_layer.py           # Gold layer builder
-│   ├── sql/                          # Gold view DDL
-│   └── tests/test_gold_views.py      # 27-check validation test
+│   ├── sql/                          # Gold SQL DDL (star schema + materialized + views)
+│   ├── query/                        # Python Query layer (7 query classes)
+│   ├── dim_date_generator.py         # dim_date parquet generator
+│   ├── dim_ticker_generator.py       # dim_ticker SCD Type 2 generator
+│   └── tests/test_gold_views.py      # 45-check validation test
 ├── docs/                              # Documentation
 │   ├── RUN_GUIDE.md                  # Detailed run guide
 │   └── superpowers/specs/           # Technical design specs
 ├── test_pipeline.py                   # One-click pipeline test
-├── dashboard.py                      # Streamlit Dashboard (INCOMPLETE)
+├── dashboard.py                      # 6-tab Streamlit Dashboard (✅ COMPLETE)
 ├── STANDARDS.md                      # Development standards
 └── README.md                         # This file
 ```
@@ -130,17 +133,14 @@ python gold/tests/test_gold_views.py
 | `STANDARDS.md` | Development standards |
 | `CLAUDE.md` | Claude Code instructions |
 
-## Gold Views (10 total)
+## Gold Layer — Star Schema
 
-| View | Description |
-|------|-------------|
-| `v_market_daily_summary` | Daily market aggregates |
-| `v_ticker_profile` | Latest ticker snapshot |
-| `v_fundamental_snapshot` | Latest financials per ticker |
-| `v_fundamental_history` | Full history with fiscal_date filtering (Bloomberg-style) |
-| `v_sentiment_price_view` | Sentiment + price reaction |
-| `v_rolling_volatility` | 20d/60d annualized volatility |
-| `v_momentum_signals` | Multi-period momentum + trend |
-| `v_sector_rotation` | Quarterly sector ranking |
-| `v_sentiment_binned_returns` | Sentiment bucket vs forward returns |
-| `fact_ar1_results` | AR(1) OLS regression (materialized table) |
+**Star Schema tables:** `dim_ticker` (SCD Type 2), `dim_date`, `fact_daily_price`, `fact_quarterly_fundamentals`, `fact_earnings_transcript`
+
+**Materialized fact tables:** `fact_rolling_volatility` (20d/60d vol), `fact_momentum_signals`, `fact_ar1_results`
+
+**OLAP views:** `v_market_daily_summary`, `v_ticker_profile`, `v_fundamental_snapshot`, `v_fundamental_history` (Bloomberg-style AS OF), `v_sentiment_price_view`, `v_sentiment_binned_returns`, `v_sector_rotation`
+
+**Query layer:** `gold/query/` — 7 parameterized query classes with `@st.cache_data`
+
+**Dashboard:** `dashboard.py` — 6-tab Streamlit (Market Overview, Stock Analysis, Fundamental History, Sentiment Analytics, Sector Rotation, Risk & Performance)

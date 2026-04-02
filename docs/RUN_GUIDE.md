@@ -3,8 +3,7 @@
 > 本文档记录在**不修改任何代码**的前提下，如何对整个项目进行完整一次性测试。
 > 环境：`qf5214_project`（Conda），Python 3.10，使用 `C:/miniconda3/envs/qf5214_project/python.exe`
 >
-> **更新状态（2026-04-02）：** Phase 5 Gold Layer 正在重建为 Star Schema，Phase 6 Dashboard 同步进行。
-> 旧版 Gold 视图（9个）将在 Star Schema 实现后被替代。
+> **更新状态（2026-04-02）：** Phase 5 Gold Layer Star Schema + Phase 6 Dashboard 已全部完成。
 >
 > **English version available:** [`RUN_GUIDE_en.md`](./RUN_GUIDE_en.md)
 
@@ -158,11 +157,11 @@ con.close()
 
 ### Step 5：构建 Gold 层
 
-> **注意（2026-04-02 redesign）：** Gold 层正在重建为 Star Schema 结构。
-> 旧版 `create_gold_views.sql` 已删除，新版使用 `create_star_schema.sql` + `create_materialized.sql` + `create_olap_views.sql`。
+> **注意（2026-04-02）：** Gold 层已完成为 Star Schema 结构。
+> 使用 `create_star_schema.sql` + `create_materialized.sql` + `create_olap_views.sql`。
 > 完整说明见 `docs/superpowers/plans/2026-04-02-medallion-star-schema-plan.md`。
 
-Gold 层构建完成后（星 schema 实现后）：
+构建 Gold 层（Star Schema 已完成）：
 
 ```bash
 cd <repo_root>
@@ -193,8 +192,6 @@ con.close()
 
 ### Step 6：验证 Gold 层
 
-> **注意：** `gold/tests/test_gold_views.py` 当前测试旧9视图，星 schema 实现后需同步更新。
-
 ```bash
 cd <repo_root>
 "C:/miniconda3/envs/qf5214_project/python.exe" gold/tests/test_gold_views.py
@@ -202,61 +199,70 @@ cd <repo_root>
 
 预期输出：
 ```
---- v_market_daily_summary ---
+--- dim_ticker (Star table) ---
+  [PASS] Table exists
+  [PASS] Has 595 rows
+--- dim_date (Star table) ---
+  [PASS] Table exists
+  [PASS] Has 36,890 rows
+--- fact_daily_price (Star table) ---
+  [PASS] Table exists
+  [PASS] Has 205,318 rows
+--- fact_quarterly_fundamentals (Star table) ---
+  [PASS] Table exists
+  [PASS] Has 4,504 rows
+--- fact_earnings_transcript (Star table) ---
+  [PASS] Table exists
+  [PASS] Has 1,954 rows
+--- fact_rolling_volatility (Materialized) ---
+  [PASS] Table exists
+  [PASS] Has 147,003 rows
+--- fact_momentum_signals (Materialized) ---
+  [PASS] Table exists
+  [PASS] Has 112,705 rows
+--- fact_ar1_results (Materialized) ---
+  [PASS] Table exists
+  [PASS] Has 135,159 rows
+--- v_market_daily_summary (OLAP view) ---
   [PASS] View exists
   [PASS] Has 251 rows
-  [PASS] All expected columns present
---- v_ticker_profile ---
+--- v_ticker_profile (OLAP view) ---
   [PASS] View exists
   [PASS] Has 818 rows
-  [PASS] All expected columns present
---- v_sentiment_price_view ---
+--- v_fundamental_snapshot (OLAP view) ---
+  [PASS] View exists
+  [PASS] Has 595 rows
+--- v_fundamental_history (OLAP view) ---
+  [PASS] View exists
+  [PASS] Has 205,318 rows
+--- v_sentiment_price_view (OLAP view) ---
   [PASS] View exists
   [PASS] Has 1,954 rows
-  [PASS] All expected columns present
---- v_rolling_volatility ---
-  [PASS] View exists
-  [PASS] Has 147,003 rows
-  [PASS] All expected columns present
---- v_momentum_signals ---
-  [PASS] View exists
-  [PASS] Has 112,705 rows
-  [PASS] All expected columns present
---- v_sector_rotation ---
-  [PASS] View exists
-  [PASS] Has 4 rows
-  [PASS] All expected columns present
---- v_sentiment_binned_returns ---
+--- v_sentiment_binned_returns (OLAP view) ---
   [PASS] View exists
   [PASS] Has 2 rows
-  [PASS] All expected columns present
---- fact_ar1_results ---
+--- v_sector_rotation (OLAP view) ---
   [PASS] View exists
-  [PASS] Has 135,160 rows
-  [PASS] All expected columns present
---- v_fundamental_history ---
-  [PASS] View exists
-  [PASS] Has 735,163 rows
-  [PASS] All expected columns present
+  [PASS] Has 52 rows
 ========================================
-Results: 27 passed, 0 failed
+Results: 45 passed, 0 failed
 ```
 
 ---
 
-## 三、Dashboard（Phase 6 — 进行中）
+## 三、Dashboard（Phase 6 — ✅ 已完成）
 
-Dashboard 正在重建为 6 Tab Bloomberg-style 界面（`docs/superpowers/plans/2026-04-02-medallion-star-schema-plan.md` Task 7）。
+6 Tab Bloomberg-style Streamlit Dashboard（`dashboard.py`）：
 
 设计 tab：
 - **Tab1 Market Overview** — 市场指数、涨跌幅
 - **Tab2 Stock Analysis** — 个股OHLCV + 技术指标
-- **Tab3 Fundamental History** — Bloomberg风格，`cutoff_date` 过滤
+- **Tab3 Fundamental History** — Bloomberg风格，`cutoff_date` 过滤（关键功能）
 - **Tab4 Sentiment Analytics** — 情感时序、情感桶收益
 - **Tab5 Sector Rotation** — 季度板块轮动
 - **Tab6 Risk & Performance** — 波动率、动量、AR1
 
-实现完成后：
+运行 Dashboard：
 ```bash
 "C:/miniconda3/envs/qf5214_project/python.exe" -m streamlit run dashboard.py --server.headless true
 ```
@@ -287,15 +293,15 @@ output/silver/
     └── transcript_sentiment/     情感分析 Parquet ✅
     ↓ [Gold Layer - Step 5]
 duckdb/spx_analytics.duckdb (Gold Star Schema)
-    ├── dim_ticker                       (SCD Type 2) 🔄
-    ├── dim_date                         (物理化)     🔄
-    ├── fact_daily_price                           🔄
-    ├── fact_quarterly_fundamentals                🔄
-    ├── fact_earnings_transcript                   🔄
-    ├── fact_rolling_volatility        (物化)       🔄
-    ├── fact_momentum_signals          (物化)       🔄
-    ├── fact_ar1_results               (物化)       🔄
-    └── [7 OLAP views]                            🔄
+    ├── dim_ticker                       (SCD Type 2) ✅
+    ├── dim_date                         (物理化)     ✅
+    ├── fact_daily_price                           ✅
+    ├── fact_quarterly_fundamentals                ✅
+    ├── fact_earnings_transcript                   ✅
+    ├── fact_rolling_volatility        (物化)       ✅
+    ├── fact_momentum_signals          (物化)       ✅
+    ├── fact_ar1_results               (物化)       ✅
+    └── [7 OLAP views]                            ✅
         ↓ [Dashboard - Step 6]
 output/gold/                          (物化 Parquet)
     ├── dim_date.parquet
@@ -385,8 +391,9 @@ LIMIT 10;
 | Bronze `raw_fundamental_index.freq` | 新增 `freq` 列（VARCHAR） | ✅ 已完成 |
 | Simulator `_seed_all_fundamentals()` | 替代 `_emit_all_fundamentals()`，ticker 分区存储 | ✅ 已完成 |
 | ELT `freq` 列 | Silver fundamentals parquet 包含 `freq` 字段 | ✅ 已完成 |
-| Gold Layer Star Schema | Medallion + Star Schema 融合重建 | 🔄 进行中 |
-| Dashboard 6 Tab | Bloomberg-style 6 Tab Streamlit 界面 | 🔄 进行中 |
+| Gold Layer Star Schema | Medallion + Star Schema 融合重建（5表+3物化+7视图） | ✅ 已完成 |
+| Python Query Layer | 7个查询类，参数化SQL，@st.cache_data | ✅ 已完成 |
+| Dashboard 6 Tab | Bloomberg-style 6 Tab Streamlit 界面 | ✅ 已完成 |
 
 **当前架构文档：** `docs/superpowers/specs/2026-04-02-medallion-star-schema-design.md`
 **执行计划：** `docs/superpowers/plans/2026-04-02-medallion-star-schema-plan.md`
@@ -394,4 +401,4 @@ LIMIT 10;
 ---
 
 *文档更新日期：2026-04-02*
-*Pipeline 版本：Phase 1-5 完成，Phase 6 Dashboard 待实现*
+*Pipeline 版本：Phase 1-6 全部完成 ✅*

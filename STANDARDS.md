@@ -58,7 +58,7 @@ ruff check .
 | Simulator | `pipeline/simulators/*.py` | `ComprehensiveSimulator` |
 | Utilities | `pipeline/utils.py` | `calculate_returns()` |
 | Config | `pipeline/config.py` | `DATA_DIR`, `DB_PATH` |
-| Dashboard | `pipeline/dashboard.py` | Streamlit app |
+| Dashboard | `dashboard.py` (root) | Streamlit 6-tab app |
 
 ### 2.3 Function Naming
 

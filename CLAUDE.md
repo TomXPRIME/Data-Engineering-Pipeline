@@ -29,14 +29,17 @@ NUS MQF (Master of Quantitative Finance) course project — a production-like SP
 ├── duckdb/                            # Gold layer SQL + DB file
 ├── gold/                              # Gold layer
 │   ├── build_gold_layer.py           # Gold layer builder
-│   ├── sql/                          # Gold view DDL
-│   └── tests/test_gold_views.py      # 27-check validation test
+│   ├── sql/                          # Gold SQL DDL (star schema + materialized + OLAP views)
+│   ├── query/                        # Python Query layer (7 query classes)
+│   ├── dim_date_generator.py         # dim_date parquet generator
+│   ├── dim_ticker_generator.py       # dim_ticker SCD Type 2 generator
+│   └── tests/test_gold_views.py      # 45-check validation test
 ├── docs/
 │   ├── RUN_GUIDE.md                  # Detailed run guide
 │   ├── ARCHIVE/                      # Archived docs
 │   └── superpowers/specs/           # Technical design specs
 ├── test_pipeline.py                   # One-click pipeline test
-├── dashboard.py                      # Streamlit dashboard (INCOMPLETE - Phase 6 pending)
+├── dashboard.py                      # 6-tab Streamlit dashboard (✅ COMPLETE)
 ├── STANDARDS.md                      # Development standards
 └── README.md                         # Project overview
 ```
@@ -107,8 +110,8 @@ python gold/tests/test_gold_views.py
 |--------|---------|
 | `test_pipeline.py` | One-click pipeline test (2024-01, ~5-10 min) |
 | `duckdb/init_bronze.py` | Initialize DuckDB Bronze tables |
-| `gold/build_gold_layer.py` | Build Gold OLAP views from Silver Parquet |
-| `gold/tests/test_gold_views.py` | Verify all 10 Gold views (27 checks) |
+| `gold/build_gold_layer.py` | Build Gold Star Schema (tables + materialized + views) |
+| `gold/tests/test_gold_views.py` | Verify all Gold tables/views (45 checks) |
 
 ## Documentation
 
@@ -127,26 +130,60 @@ Core packages (conda environment `qf5214_project`):
 - `pypdf` for PDF text extraction
 - `textblob` for sentiment analysis
 
-## Gold Views (10 total)
+## Gold Layer — Star Schema (5 tables + 3 materialized + 7 views)
 
-| View | Description | Rows (2024 test) |
-|------|-------------|-------------|
+**Physical Dimension Tables:**
+| Table | Description | Rows |
+|-------|-------------|------|
+| `dim_date` | Physical date dimension (US trading calendar) | 36,890 |
+| `dim_ticker` | SCD Type 2 ticker dimension | 595 |
+
+**Fact Tables:**
+| Table | Description | Rows |
+|-------|-------------|------|
+| `fact_daily_price` | Daily OHLCV + precomputed returns | 205,318 |
+| `fact_quarterly_fundamentals` | Pivoted quarterly financials | 4,504 |
+| `fact_earnings_transcript` | Sentiment + price reaction | 1,954 |
+
+**Materialized Fact Tables (pre-computed heavy window functions):**
+| Table | Description | Rows |
+|-------|-------------|------|
+| `fact_rolling_volatility` | 20d/60d annualized volatility | 147,003 |
+| `fact_momentum_signals` | Multi-period momentum + MA deviation | 112,705 |
+| `fact_ar1_results` | AR(1) OLS regression per ticker | 135,159 |
+
+**OLAP Views (lightweight aggregations):**
+| View | Description | Rows |
+|------|-------------|------|
 | `v_market_daily_summary` | Daily market aggregates | 251 |
 | `v_ticker_profile` | Latest ticker snapshot | 818 |
 | `v_fundamental_snapshot` | Latest financials per ticker | 595 |
-| `v_fundamental_history` | Full history with fiscal_date filtering | 735,163 |
+| `v_fundamental_history` | Bloomberg-style AS OF join | 205,318 |
 | `v_sentiment_price_view` | Sentiment + price reaction | 1,954 |
-| `v_rolling_volatility` | 20d/60d annualized volatility | 147,003 |
-| `v_momentum_signals` | Multi-period momentum + trend | 112,705 |
-| `v_sector_rotation` | Quarterly sector ranking | 4 |
 | `v_sentiment_binned_returns` | Sentiment bucket vs forward returns | 2 |
-| `fact_ar1_results` | AR(1) OLS regression (materialized table) | 135,160 |
+| `v_sector_rotation` | Quarterly sector ranking | 52 |
 
-## Dashboard (Phase 6 — INCOMPLETE)
+## Python Query Layer
 
-Dashboard was removed due to `st.hist_chart` bug and scope issues.
-**Bloomberg-style Fundamental History page** (with `cutoff_date` filtering via `v_fundamental_history`)
-needs to be re-implemented as a separate page on top of the restored dashboard.
+7 query classes in `gold/query/` with `@st.cache_data(ttl=3600)`:
+- `PriceQuery` — market overview, ticker price, trading dates
+- `FundamentalsQuery` — snapshot, history (Bloomberg AS OF), quarterly
+- `SentimentQuery` — sentiment view, binned returns
+- `RiskQuery` — rolling volatility, AR1 results
+- `SectorQuery` — sector rotation
+- `DimensionQuery` — tickers, trading calendar
+
+All queries use **parameterized SQL** to prevent injection.
+
+## Dashboard (Phase 6 — COMPLETE)
+
+6-tab Bloomberg-style Streamlit dashboard at `dashboard.py`:
+- **Tab1 Market Overview** — avg_close, avg_return, volume time series
+- **Tab2 Stock Analysis** — OHLCV chart + data table
+- **Tab3 Fundamental History** — Bloomberg-style `cutoff_date` filter via `v_fundamental_history`
+- **Tab4 Sentiment Analytics** — sentiment time series + binned returns
+- **Tab5 Sector Rotation** — quarterly sector rankings with momentum rank
+- **Tab6 Risk & Performance** — 20d/60d volatility, AR1 alpha/beta
 
 ## Implementation Phases
 
@@ -156,5 +193,5 @@ needs to be re-implemented as a separate page on top of the restored dashboard.
 | 2 | Bronze Layer (Ingestion Engine, ticker-partitioned fundamentals) | ✅ Completed |
 | 3 | ELT Pipeline (Bronze → Silver, freq propagation) | ✅ Completed |
 | 4 | Silver Layer (Parquet + Sentiment) | ✅ Completed |
-| 5 | Gold Layer (10 OLAP views including `v_fundamental_history`) | ✅ Completed |
-| 6 | Streamlit Dashboard | ❌ Incomplete |
+| 5 | Gold Layer Star Schema (5 tables + 3 materialized + 7 views) | ✅ Completed |
+| 6 | Streamlit 6-tab Dashboard | ✅ Completed |

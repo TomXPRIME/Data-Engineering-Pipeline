@@ -3,8 +3,7 @@
 > This document describes how to run a complete end-to-end test of the entire project **without modifying any code**.
 > Environment: `qf5214_project` (Conda), Python 3.10, using `C:/miniconda3/envs/qf5214_project/python.exe`
 >
-> **Update Status (2026-04-02):** Phase 5 Gold Layer being rebuilt as Star Schema, Phase 6 Dashboard in progress.
-> Old Gold views (9) will be replaced after Star Schema implementation.
+> **Update Status (2026-04-02):** Phase 5 Gold Layer Star Schema + Phase 6 Dashboard all COMPLETE.
 
 ---
 
@@ -152,11 +151,11 @@ con.close()
 
 ### Step 5: Build Gold Layer
 
-> **Note (2026-04-02 redesign):** Gold Layer is being rebuilt as Star Schema.
-> Old `create_gold_views.sql` deleted; new design uses `create_star_schema.sql` + `create_materialized.sql` + `create_olap_views.sql`.
+> **Note (2026-04-02):** Gold Layer is now Star Schema.
+> Uses `create_star_schema.sql` + `create_materialized.sql` + `create_olap_views.sql`.
 > Full details: `docs/superpowers/plans/2026-04-02-medallion-star-schema-plan.md`.
 
-After Star Schema implementation:
+Build Gold Layer:
 
 ```bash
 cd <repo_root>
@@ -187,8 +186,6 @@ con.close()
 
 ### Step 6: Verify Gold Layer
 
-> **Note:** `gold/tests/test_gold_views.py` currently tests old 9 views; will need update after Star Schema implementation.
-
 ```bash
 cd <repo_root>
 "C:/miniconda3/envs/qf5214_project/python.exe" gold/tests/test_gold_views.py
@@ -196,61 +193,70 @@ cd <repo_root>
 
 Expected output:
 ```
---- v_market_daily_summary ---
+--- dim_ticker (Star table) ---
+  [PASS] Table exists
+  [PASS] Has 595 rows
+--- dim_date (Star table) ---
+  [PASS] Table exists
+  [PASS] Has 36,890 rows
+--- fact_daily_price (Star table) ---
+  [PASS] Table exists
+  [PASS] Has 205,318 rows
+--- fact_quarterly_fundamentals (Star table) ---
+  [PASS] Table exists
+  [PASS] Has 4,504 rows
+--- fact_earnings_transcript (Star table) ---
+  [PASS] Table exists
+  [PASS] Has 1,954 rows
+--- fact_rolling_volatility (Materialized) ---
+  [PASS] Table exists
+  [PASS] Has 147,003 rows
+--- fact_momentum_signals (Materialized) ---
+  [PASS] Table exists
+  [PASS] Has 112,705 rows
+--- fact_ar1_results (Materialized) ---
+  [PASS] Table exists
+  [PASS] Has 135,159 rows
+--- v_market_daily_summary (OLAP view) ---
   [PASS] View exists
   [PASS] Has 251 rows
-  [PASS] All expected columns present
---- v_ticker_profile ---
+--- v_ticker_profile (OLAP view) ---
   [PASS] View exists
   [PASS] Has 818 rows
-  [PASS] All expected columns present
---- v_sentiment_price_view ---
+--- v_fundamental_snapshot (OLAP view) ---
+  [PASS] View exists
+  [PASS] Has 595 rows
+--- v_fundamental_history (OLAP view) ---
+  [PASS] View exists
+  [PASS] Has 205,318 rows
+--- v_sentiment_price_view (OLAP view) ---
   [PASS] View exists
   [PASS] Has 1,954 rows
-  [PASS] All expected columns present
---- v_rolling_volatility ---
-  [PASS] View exists
-  [PASS] Has 147,003 rows
-  [PASS] All expected columns present
---- v_momentum_signals ---
-  [PASS] View exists
-  [PASS] Has 112,705 rows
-  [PASS] All expected columns present
---- v_sector_rotation ---
-  [PASS] View exists
-  [PASS] Has 4 rows
-  [PASS] All expected columns present
---- v_sentiment_binned_returns ---
+--- v_sentiment_binned_returns (OLAP view) ---
   [PASS] View exists
   [PASS] Has 2 rows
-  [PASS] All expected columns present
---- v_ar1_time_series ---
+--- v_sector_rotation (OLAP view) ---
   [PASS] View exists
-  [PASS] Has 135,160 rows
-  [PASS] All expected columns present
---- v_fundamental_history ---
-  [PASS] View exists
-  [PASS] Has 735,163 rows
-  [PASS] All expected columns present
+  [PASS] Has 52 rows
 ========================================
-Results: 27 passed, 0 failed
+Results: 45 passed, 0 failed
 ```
 
 ---
 
-## 3. Dashboard (Phase 6 — IN PROGRESS)
+## 3. Dashboard (Phase 6 — ✅ COMPLETE)
 
-Dashboard being rebuilt as 6 Tab Bloomberg-style interface (`docs/superpowers/plans/2026-04-02-medallion-star-schema-plan.md` Task 7).
+6 Tab Bloomberg-style Streamlit Dashboard (`dashboard.py`):
 
 Target tabs:
 - **Tab1 Market Overview** — market index, returns
 - **Tab2 Stock Analysis** — OHLCV + technical indicators
-- **Tab3 Fundamental History** — Bloomberg-style, `cutoff_date` filtering
+- **Tab3 Fundamental History** — Bloomberg-style, `cutoff_date` filtering (key feature)
 - **Tab4 Sentiment Analytics** — sentiment time series, binned returns
 - **Tab5 Sector Rotation** — quarterly sector ranking
 - **Tab6 Risk & Performance** — volatility, momentum, AR1
 
-When ready:
+Run Dashboard:
 ```bash
 "C:/miniconda3/envs/qf5214_project/python.exe" -m streamlit run dashboard.py --server.headless true
 ```
@@ -281,15 +287,15 @@ output/silver/
     └── transcript_sentiment/       Sentiment analysis Parquet ✅
     ↓ [Gold Layer - Step 5]
 duckdb/spx_analytics.duckdb (Gold Star Schema)
-    ├── dim_ticker                       (SCD Type 2) 🔄
-    ├── dim_date                         (physicalized)     🔄
-    ├── fact_daily_price                           🔄
-    ├── fact_quarterly_fundamentals                🔄
-    ├── fact_earnings_transcript                   🔄
-    ├── fact_rolling_volatility        (materialized) 🔄
-    ├── fact_momentum_signals          (materialized) 🔄
-    ├── fact_ar1_results              (materialized) 🔄
-    └── [7 OLAP views]                            🔄
+    ├── dim_ticker                       (SCD Type 2) ✅
+    ├── dim_date                         (physicalized)     ✅
+    ├── fact_daily_price                           ✅
+    ├── fact_quarterly_fundamentals                ✅
+    ├── fact_earnings_transcript                   ✅
+    ├── fact_rolling_volatility        (materialized) ✅
+    ├── fact_momentum_signals          (materialized) ✅
+    ├── fact_ar1_results              (materialized) ✅
+    └── [7 OLAP views]                            ✅
         ↓ [Dashboard - Step 6]
 output/gold/                          (materialized Parquet)
     ├── dim_date.parquet
@@ -354,8 +360,9 @@ LIMIT 10;
 | Bronze `raw_fundamental_index.freq` | Added `freq` VARCHAR column | ✅ Done |
 | Simulator `_seed_all_fundamentals()` | Replaced batch dump with ticker-partitioned seed | ✅ Done |
 | ELT `freq` column | Silver fundamentals parquet includes `freq` field | ✅ Done |
-| Gold Layer Star Schema | Medallion + Star Schema fusion rebuild | 🔄 In Progress |
-| Dashboard 6 Tab | Bloomberg-style 6 Tab Streamlit interface | 🔄 In Progress |
+| Gold Layer Star Schema | Medallion + Star Schema rebuild (5 tables + 3 materialized + 7 views) | ✅ Done |
+| Python Query Layer | 7 query classes, parameterized SQL, @st.cache_data | ✅ Done |
+| Dashboard 6 Tab | Bloomberg-style 6 Tab Streamlit interface | ✅ Done |
 
 **Current architecture doc:** `docs/superpowers/specs/2026-04-02-medallion-star-schema-design.md`
 **Implementation plan:** `docs/superpowers/plans/2026-04-02-medallion-star-schema-plan.md`
@@ -385,4 +392,4 @@ LIMIT 10;
 ---
 
 *Document updated: 2026-04-02*
-*Pipeline version: Phase 1-4 complete, Phase 5 (Star Schema) + Phase 6 (Dashboard) in progress*
+*Pipeline version: Phase 1-6 ALL COMPLETE ✅*

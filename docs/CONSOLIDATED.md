@@ -41,8 +41,9 @@ Streamlit Dashboard (6 Tab)
 | 2 | Bronze Layer (ticker-partitioned landing zone, `freq` column) | ✅ Completed | `fundamentals/{ticker}/` |
 | 3 | ELT Pipeline (Bronze → Silver, `freq` propagation) | ✅ Completed | |
 | 4 | Silver Layer (Parquet + Sentiment) | ✅ Completed | |
-| 5 | Gold Layer (Star Schema) | 🔄 In Progress | New design: medallion + star schema fusion |
-| 6 | Streamlit Dashboard (6 Tab) | 🔄 In Progress | Part of Phase 5 |
+| 5 | Gold Layer (Star Schema: 5 tables + 3 materialized + 7 views) | ✅ Completed | New design: medallion + star schema fusion |
+| 6 | Streamlit Dashboard (6 Tab) | ✅ Completed | Market Overview, Stock Analysis, Fundamental History, Sentiment, Sector Rotation, Risk |
+| 7 | Python Query Layer (7 classes, parameterized SQL) | ✅ Completed | `@st.cache_data(ttl=3600)` |
 
 **Phase 5 & 6 详细设计：** `docs/superpowers/specs/2026-04-02-medallion-star-schema-design.md`
 **执行计划：** `docs/superpowers/plans/2026-04-02-medallion-star-schema-plan.md`

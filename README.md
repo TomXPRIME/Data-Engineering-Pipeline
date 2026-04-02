@@ -143,4 +143,4 @@ python gold/tests/test_gold_views.py
 | `v_momentum_signals` | Multi-period momentum + trend |
 | `v_sector_rotation` | Quarterly sector ranking |
 | `v_sentiment_binned_returns` | Sentiment bucket vs forward returns |
-| `v_ar1_time_series` | AR(1) OLS regression |
+| `fact_ar1_results` | AR(1) OLS regression (materialized table) |

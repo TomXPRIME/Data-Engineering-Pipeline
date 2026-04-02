@@ -230,7 +230,7 @@ cd <repo_root>
   [PASS] View exists
   [PASS] Has 2 rows
   [PASS] All expected columns present
---- v_ar1_time_series ---
+--- fact_ar1_results ---
   [PASS] View exists
   [PASS] Has 135,160 rows
   [PASS] All expected columns present

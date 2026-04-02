@@ -140,7 +140,7 @@ Core packages (conda environment `qf5214_project`):
 | `v_momentum_signals` | Multi-period momentum + trend | 112,705 |
 | `v_sector_rotation` | Quarterly sector ranking | 4 |
 | `v_sentiment_binned_returns` | Sentiment bucket vs forward returns | 2 |
-| `v_ar1_time_series` | AR(1) OLS regression | 135,160 |
+| `fact_ar1_results` | AR(1) OLS regression (materialized table) | 135,160 |
 
 ## Dashboard (Phase 6 — INCOMPLETE)
 

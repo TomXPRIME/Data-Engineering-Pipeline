@@ -153,14 +153,73 @@ def render_ticker_profile(ticker_profile: pd.DataFrame, selected_ticker: str | N
     st.bar_chart(sector_counts.set_index("sector")["count"])
 
 
-def render_fundamental_snapshot(
-    fundamental_snapshot: pd.DataFrame, selected_ticker: str | None
-) -> None:
-    st.subheader("v_fundamental_snapshot")
-    df = fundamental_snapshot
-    if selected_ticker:
-        df = df[df["ticker"] == selected_ticker]
-    st.dataframe(df, use_container_width=True, hide_index=True)
+def render_fundamental_history(con, ticker_list: list) -> None:
+    """Bloomberg-style fundamental history with cutoff_date."""
+    st.subheader("Fundamental History")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        ticker = st.selectbox("Ticker", ticker_list)
+    with col2:
+        cutoff = st.text_input("Cutoff Date (YYYY-MM-DD)", value="2024-12-31")
+    with col3:
+        freq_filter = st.selectbox("Frequency", ["both", "quarterly", "annual"])
+
+    col4, col5 = st.columns([2, 1])
+    with col4:
+        report_types = st.multiselect(
+            "Report Type", ["income", "balance", "cashflow"], default=["income"]
+        )
+    with col5:
+        top_n = st.number_input("Top N periods", value=8, min_value=2, max_value=20)
+
+    if not ticker:
+        st.info("Select a ticker to view fundamentals.")
+        return
+
+    # Build parameterized query
+    params = [ticker, cutoff]
+    freq_sql = ""
+    if freq_filter == "quarterly":
+        freq_sql = "AND freq = ?"
+        params.append("quarterly")
+    elif freq_filter == "annual":
+        freq_sql = "AND freq = ?"
+        params.append("annual")
+
+    report_sql = ""
+    if report_types:
+        placeholders = ", ".join(["?"] * len(report_types))
+        report_sql = f"AND report_type IN ({placeholders})"
+        params.extend(report_types)
+
+    query = f"""
+        SELECT ticker, fiscal_date, report_type, freq, metric, value
+        FROM v_fundamental_history
+        WHERE ticker = ? AND fiscal_date <= ? {freq_sql} {report_sql}
+        ORDER BY fiscal_date DESC, metric
+        LIMIT 1000
+    """
+    df = con.execute(query, params).fetchdf()
+
+    if df.empty:
+        st.warning(f"No fundamental data for {ticker} as of {cutoff}")
+        return
+
+    # Pivot: rows=metrics, columns=fiscal periods
+    pivot = df.pivot_table(
+        index="metric",
+        columns="fiscal_date",
+        values="value",
+        aggfunc="first"
+    )
+    # Show only top N most recent periods
+    pivot = pivot[sorted(pivot.columns, reverse=True)[:top_n]]
+
+    st.markdown(f"**{ticker} — Fundamental History (as of {cutoff})**")
+    st.dataframe(pivot, use_container_width=True)
+
+    st.caption(f"Rows: {len(df)} | Freq: {freq_filter} | Report types: {report_types}")
 
 
 def render_sentiment_price(sentiment_price: pd.DataFrame) -> None:
@@ -392,7 +451,7 @@ def main() -> None:
             "Overview",
             "Market Daily Summary",
             "Ticker Profile",
-            "Fundamental Snapshot",
+            "Fundamental History",
             "Sentiment Price View",
             "Sector Rotation",
             "Sentiment Analysis",
@@ -421,8 +480,8 @@ def main() -> None:
         render_market_daily(market_daily)
     elif page == "Ticker Profile":
         render_ticker_profile(ticker_profile, selected_ticker)
-    elif page == "Fundamental Snapshot":
-        render_fundamental_snapshot(fundamental_snapshot, selected_ticker)
+    elif page == "Fundamental History":
+        render_fundamental_history(conn, ticker_list)
     elif page == "Sentiment Price View":
         render_sentiment_price(sentiment_price)
     elif page == "Sector Rotation":

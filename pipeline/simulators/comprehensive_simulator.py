@@ -180,6 +180,7 @@ class ComprehensiveSimulator:
     def _emit_fundamentals(self, date: str) -> int:
         """
         Emit fundamental data for given date using pre-built index.
+        Emits to: landing_zone/fundamentals/{ticker}/{report_type}_{freq}.csv
         Returns number of files emitted.
 
         Performance: Uses index lookup instead of scanning files each day.
@@ -191,10 +192,10 @@ class ComprehensiveSimulator:
             return 0
 
         for ticker, report_type, freq, filepath in self._fundamental_index[date]:
-            output_dir = LANDING_ZONE / "fundamentals" / date
-            output_dir.mkdir(parents=True, exist_ok=True)
+            ticker_dir = LANDING_ZONE / "fundamentals" / ticker
+            ticker_dir.mkdir(parents=True, exist_ok=True)
 
-            output_file = output_dir / f"{ticker}_{report_type}_{freq}.csv"
+            output_file = ticker_dir / f"{report_type}_{freq}.csv"
             if not output_file.exists():
                 try:
                     import shutil
@@ -209,6 +210,44 @@ class ComprehensiveSimulator:
                 except Exception as e:
                     logger.debug(f"Failed to emit fundamentals for {ticker}: {e}")
 
+        return emitted
+
+    def _seed_all_fundamentals(self) -> int:
+        """
+        Emit ALL historical fundamental files to landing zone, organized by ticker.
+        Called once at start of backfill to seed the ticker-partitioned landing zone.
+        Emits to: landing_zone/fundamentals/{ticker}/{report_type}_{freq}.csv
+
+        Unlike _emit_all_fundamentals(), this copies files to ticker-partitioned
+        directories (not date-partitioned), matching the new ingestion engine format.
+
+        Returns count of files emitted.
+        """
+        emitted = 0
+        fundamental_dir = DATA_DIR / "data" / "fundamental" / "SPX_Fundamental_History"
+
+        for csv_file in fundamental_dir.glob("*.csv"):
+            # Skip profile_metadata files - handled separately by ELT pipeline
+            if "profile_metadata" in csv_file.name:
+                continue
+
+            # Parse: TICKER_reportType_freq.csv
+            parts = csv_file.stem.rsplit("_", 2)
+            if len(parts) != 3:
+                continue
+            ticker, report_type, freq = parts
+
+            # Destination: landing_zone/fundamentals/{ticker}/{report_type}_{freq}.csv
+            ticker_dir = LANDING_ZONE / "fundamentals" / ticker
+            ticker_dir.mkdir(parents=True, exist_ok=True)
+
+            dest_file = ticker_dir / f"{report_type}_{freq}.csv"
+            if not dest_file.exists():
+                import shutil
+                shutil.copy2(csv_file, dest_file)
+                emitted += 1
+
+        logger.info(f"Seeded {emitted} fundamental files to ticker-partitioned landing zone")
         return emitted
 
     def _emit_transcripts(self, date: str) -> int:
@@ -263,6 +302,12 @@ class ComprehensiveSimulator:
             # Start from day after watermark
             start_date = (datetime.strptime(last_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
             logger.info(f"Adjusted start date: {start_date}")
+
+        # Seed all historical fundamentals if starting fresh (no watermark)
+        if not last_date:
+            logger.info("Seeding ticker-partitioned fundamental landing zone...")
+            seeded_count = self._seed_all_fundamentals()
+            logger.info(f"Seeded {seeded_count} fundamental files")
 
         # Get all trading dates in range
         trading_dates = self.provider.get_trading_dates(start_date, end_date)

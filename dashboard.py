@@ -1,5 +1,6 @@
 from pathlib import Path
 import importlib
+import re
 import sys
 
 import pandas as pd
@@ -165,6 +166,11 @@ def render_fundamental_history(con, ticker_list: list) -> None:
     with col3:
         freq_filter = st.selectbox("Frequency", ["both", "quarterly", "annual"])
 
+    if cutoff:
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', cutoff):
+            st.warning("Cutoff date must be in YYYY-MM-DD format")
+            return
+
     col4, col5 = st.columns([2, 1])
     with col4:
         report_types = st.multiselect(
@@ -200,7 +206,11 @@ def render_fundamental_history(con, ticker_list: list) -> None:
         ORDER BY fiscal_date DESC, metric
         LIMIT 1000
     """
-    df = con.execute(query, params).fetchdf()
+    try:
+        df = con.execute(query, params).fetchdf()
+    except Exception as e:
+        st.error(f"Query failed: {e}")
+        return
 
     if df.empty:
         st.warning(f"No fundamental data for {ticker} as of {cutoff}")

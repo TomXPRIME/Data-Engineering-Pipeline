@@ -23,6 +23,18 @@ class DimensionQuery:
 
     @staticmethod
     @st.cache_data(ttl=3600)
+    def get_date_range() -> tuple[str, str]:
+        """Return (min_date, max_date) of all trading days in the database."""
+        with GoldDataProvider() as gdp:
+            df = gdp.execute("""
+                SELECT MIN(date) AS min_date, MAX(date) AS max_date
+                FROM dim_date
+                WHERE is_trading_day = True
+            """)
+            return df.iloc[0]["min_date"], df.iloc[0]["max_date"]
+
+    @staticmethod
+    @st.cache_data(ttl=3600)
     def get_trading_calendar(start_date: str, end_date: str) -> pd.DataFrame:
         with GoldDataProvider() as gdp:
             return gdp.execute("""

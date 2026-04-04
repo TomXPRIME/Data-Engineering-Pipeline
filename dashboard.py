@@ -95,10 +95,14 @@ def main():
 
     # ── Sidebar: Global Filters ──────────────────────────────────────
     st.sidebar.title("SPX Analytics")
+    min_date, max_date = DimensionQuery.get_date_range()
+    if min_date is None or max_date is None:
+        min_date, max_date = "2023-01-01", "2024-12-31"
     date_range = st.sidebar.date_input(
         "Date Range",
-        value=(datetime(2023, 1, 1), datetime(2024, 12, 31)),
-        max_value=datetime(2024, 12, 31),
+        value=(datetime.strptime(min_date, "%Y-%m-%d"), datetime.strptime(max_date, "%Y-%m-%d")),
+        min_value=datetime.strptime(min_date, "%Y-%m-%d"),
+        max_value=datetime.strptime(max_date, "%Y-%m-%d"),
     )
     if len(date_range) == 2:
         start_date, end_date = date_range[0].strftime("%Y-%m-%d"), date_range[1].strftime("%Y-%m-%d")
